@@ -137,7 +137,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
       <div className={`timeline ${trajectoryOpen ? 'trajectory-view' : ''}`} ref={timeline} onScroll={trackScroll}>
         {trajectoryOpen ? trajectoryContent : chatContent}
       </div>
-      <Composer running={conversation.running} configuration={configuration} hasSession={!!conversation.selectedSessionId} selectModel={selectModel} selectPermission={selectPermission} send={send} cancel={cancel}/>
+      {!trajectoryOpen && <Composer running={conversation.running} configuration={configuration} hasSession={!!conversation.selectedSessionId} selectModel={selectModel} selectPermission={selectPermission} send={send} cancel={cancel}/>}
     </div>
   )
 }
