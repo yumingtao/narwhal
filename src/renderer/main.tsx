@@ -20,7 +20,11 @@ if (!_api) throw new Error('Narwhal Forge desktop bridge is unavailable')
 const api = _api
 const blankConversation: AgentConversation = { sessions: [], messages: [], trajectory: [], running: false }
 const blank: WorkbenchSnapshot = { workspaces: [], tasks: [], deliverables: [], panelOpen: false, git: { changes: [] }, conversation: blankConversation }
-export function Icon({ name }: { name: string }) { return <span className={`icon i-${name}`} aria-hidden="true" /> }
+import { iconMap, type IconName } from './icons'
+export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
+  const render = iconMap[name]
+  return render ? <span className={`icon i-${name}`} aria-hidden="true">{render(size)}</span> : null
+}
 function statusText(state: AgentSnapshot['state']) { return state === 'ready' ? 'Agent ready' : state === 'starting' ? 'Starting agent' : 'Agent needs restart' }
 function sessionTitle(item: AgentConversation['sessions'][number]) { return item.title === 'Untitled conversation' ? `Conversation · ${new Date(item.updatedAt).toLocaleDateString()}` : item.title }
 const markdownComponents: Components = {
@@ -151,7 +155,7 @@ function normalizeTrajectory(item: ChatItem) {
   return {
     label: descriptor.label,
     text: descriptor.text,
-    type: descriptor.type,
+    type: descriptor.type as IconName,
     hidden: descriptor.hidden,
   }
 }
@@ -178,7 +182,7 @@ function SettingsDialog({ settings, agent, close, restart }: { settings: Desktop
   useEffect(() => { void load() }, [])
   const update = async (operation: () => Promise<AgentConfiguration>, notice = 'Saved locally.') => { try { setMessage(''); setConfiguration(await operation()); if (notice) setMessage(notice) } catch { setMessage('The local Agent rejected that setting. Nothing was changed.') } }
   const createProvider = async (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelId: string; apiKey?: string }) => { try { setMessage(''); const result = await api.createProvider(input); setConfiguration(result.configuration); setMessage(result.keyStored ? 'Provider created locally.' : 'Provider was created, but the API key was rejected. Add the key from its provider row.'); return true } catch (error) { setMessage(error instanceof Error ? error.message : 'The local Agent rejected this provider. Nothing was created.'); return false } }
-  const navigation: ReadonlyArray<{ readonly id: typeof tab; readonly label: string; readonly icon: string; readonly group: string }> = [
+  const navigation: ReadonlyArray<{ readonly id: typeof tab; readonly label: string; readonly icon: IconName; readonly group: string }> = [
     { id: 'models', label: 'Models', icon: 'model', group: 'Agent' },
     { id: 'providers', label: 'Providers', icon: 'provider', group: 'Agent' },
     { id: 'permissions', label: 'Permissions', icon: 'shield', group: 'Security' },
