@@ -9,7 +9,7 @@
     "build": "vite build && tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "pnpm run build && electron .",
-    "dev:web": "vite --config vite.config.ts src/renderer/preview.html --host",
+    "dev:web": "vite --config vite.config.ts --host",
     "start": "electron .",
     "stage:runtime": "node scripts/stage-runtime.mjs",
     "package:mac": "pnpm run build && pnpm run stage:runtime && electron-builder --mac dmg zip"

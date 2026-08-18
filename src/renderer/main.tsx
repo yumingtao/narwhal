@@ -5,7 +5,12 @@ import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github-dark.css'
 import type { AgentConfiguration, AgentConversation, AgentSnapshot, ChatItem, DesktopSettings, Task, WorkbenchSnapshot } from '../shared/desktop-contract'
-import { classifyActivity } from '../shared/activity-classifier'
+import { classifyTrajectory } from '../shared/trajectory-classifier'
+import { buildTrajectoryData } from './trajectory/builder'
+import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar'
+import { TrajectoryTimeline } from './trajectory/TrajectoryTimeline'
+import { TrajectoryTable } from './trajectory/TrajectoryTable'
+import { TrajectoryInspector } from './trajectory/TrajectoryInspector'
 import './styles.css'
 
 // Detect Electron vs. browser (dev preview) environment and load the appropriate bridge
@@ -13,9 +18,9 @@ import './mock-bridge.js'
 const _api = window.narwhal
 if (!_api) throw new Error('Narwhal Forge desktop bridge is unavailable')
 const api = _api
-const blankConversation: AgentConversation = { sessions: [], messages: [], activity: [], running: false }
+const blankConversation: AgentConversation = { sessions: [], messages: [], trajectory: [], running: false }
 const blank: WorkbenchSnapshot = { workspaces: [], tasks: [], deliverables: [], panelOpen: false, git: { changes: [] }, conversation: blankConversation }
-function Icon({ name }: { name: string }) { return <span className={`icon i-${name}`} aria-hidden="true" /> }
+export function Icon({ name }: { name: string }) { return <span className={`icon i-${name}`} aria-hidden="true" /> }
 function statusText(state: AgentSnapshot['state']) { return state === 'ready' ? 'Agent ready' : state === 'starting' ? 'Starting agent' : 'Agent needs restart' }
 function sessionTitle(item: AgentConversation['sessions'][number]) { return item.title === 'Untitled conversation' ? `Conversation · ${new Date(item.updatedAt).toLocaleDateString()}` : item.title }
 const markdownComponents: Components = {
@@ -26,7 +31,7 @@ const markdownComponents: Components = {
     return <div className="code-block"><div><span>{language}</span><button type="button" aria-label="Copy code" onClick={() => void navigator.clipboard.writeText(text).catch(() => undefined)}>Copy</button></div><pre><code className={className} {...props}>{children}</code></pre></div>
   },
 }
-function MarkdownMessage({ content }: { content: string }) { return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>{content}</ReactMarkdown> }
+export function MarkdownMessage({ content }: { content: string }) { return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>{content}</ReactMarkdown> }
 
 function App() {
   const [workbench, setWorkbench] = useState<WorkbenchSnapshot>(blank)
@@ -37,7 +42,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [taskDraft, setTaskDraft] = useState(false)
   const [deliverableDraft, setDeliverableDraft] = useState(false)
-  const [activityOpen, setActivityOpen] = useState(false)
+  const [trajectoryOpen, setTrajectoryOpen] = useState(false)
   const [error, setError] = useState('')
   const selectedTask = useMemo(() => workbench.tasks.find((task) => task.id === workbench.selectedTaskId) ?? workbench.tasks[0], [workbench])
   const workspace = workbench.workspaces.find((item) => item.id === workbench.selectedWorkspaceId)
@@ -63,7 +68,7 @@ function App() {
       </aside>
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
-        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} activityOpen={activityOpen} setActivityOpen={setActivityOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))}/>} 
+        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))}/>} 
         <footer className="statusbar"><span><Icon name="branch"/>{workbench.git.branch ?? 'No Git repository'}</span><span><i className="local-dot"/>Local only</span><span className="runtime">{statusText(agent.state)}</span></footer>
       </section>
       {workbench.panelOpen && <button className="drawer-backdrop" aria-label="Close work context" onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
@@ -77,10 +82,68 @@ function App() {
 }
 
 function SideBar({ workbench, conversation, workspace, agent, selectedTask, choose, selectWorkspace, createSession, selectSession, selectTask }: { workbench: WorkbenchSnapshot; conversation: AgentConversation; workspace: WorkbenchSnapshot['workspaces'][number] | undefined; agent: AgentSnapshot; selectedTask: Task | undefined; choose: () => void; selectWorkspace: (id: string) => void; createSession: () => void; selectSession: (id: string) => void; selectTask: (id: string) => void }) { return <><div className="side-section"><div className="section-heading"><span>Workspaces</span><button className="workspace-add" aria-label="Open workspace" title="Open workspace" onClick={choose}><Icon name="folder-plus"/></button></div><div className="workspace-list">{workbench.workspaces.length ? workbench.workspaces.map((item) => <button key={item.id} className={item.id === workbench.selectedWorkspaceId ? 'workspace active' : 'workspace'} onClick={() => selectWorkspace(item.id)}><Icon name="folder"/><span>{item.name}</span></button>) : <p className="empty-side">Open a local folder to begin.</p>}</div></div><div className="side-section"><div className="section-heading"><span>Conversations</span><button disabled={!workspace || agent.state !== 'ready'} title="New conversation" onClick={createSession}><Icon name="plus"/></button></div><div className="sessions">{workspace ? conversation.sessions.length ? conversation.sessions.map((item) => <button className={item.id === conversation.selectedSessionId ? 'session active' : 'session'} key={item.id} onClick={() => selectSession(item.id)}><span>{sessionTitle(item)}</span>{item.running && <i className="session-live"/>}</button>) : <p className="empty-side">Create a conversation to begin.</p> : <p className="empty-side">Choose a workspace first.</p>}</div></div><div className="side-section task-list"><div className="section-heading"><span>Tasks</span><span className="count">{workbench.tasks.length}</span></div>{workbench.tasks.slice(0, 4).map((task) => <button className={task.id === selectedTask?.id ? 'session active' : 'session'} key={task.id} onClick={() => selectTask(task.id)}><span>{task.title}</span><small>{task.status === 'done' ? 'Done' : 'Active'}</small></button>)}</div></> }
-function NativeConversation({ conversation, configuration, selectModel, selectPermission, activityOpen, setActivityOpen, send, cancel }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; activityOpen: boolean; setActivityOpen: (value: boolean) => void; send: (text: string) => void; cancel: () => void }) { const phases = useMemo(() => activityPhases(conversation.activity), [conversation.activity]); const content = activityOpen ? phases.flatMap((phase) => phase.items) : conversation.messages; const timeline = useRef<HTMLDivElement>(null); const followOutput = useRef(true); useEffect(() => { if (conversation.running) followOutput.current = true; const element = timeline.current; if (element && followOutput.current) element.scrollTo({ top: element.scrollHeight, behavior: conversation.running ? 'auto' : 'smooth' }) }, [activityOpen, content, conversation.running]); const trackScroll = () => { const element = timeline.current; if (element) followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48 }; return <div className="native-conversation"><div className="conversation-head"><div><p>Local Agent</p><h1>{activityOpen ? 'Activity' : 'Work'}</h1></div><div className="segmented"><button className={!activityOpen ? 'active' : ''} onClick={() => setActivityOpen(false)}>Work</button><button className={activityOpen ? 'active' : ''} onClick={() => setActivityOpen(true)}>Activity</button></div></div><div className={`timeline ${activityOpen ? 'activity-timeline' : ''}`} ref={timeline} onScroll={trackScroll}>{content.length ? activityOpen ? <div className="activity-phase-list">{phases.map((phase, index) => <section className="activity-phase" key={phase.id}><header><span>{index === phases.length - 1 && conversation.running ? 'Current turn' : `Turn ${index + 1}`}</span><strong>{phase.summary}</strong></header>{phase.items.map((item) => <TimelineItem key={item.id} item={item} activity/>)}</section>)}</div> : content.map((item) => <TimelineItem key={item.id} item={item} activity={false}/>) : <div className="conversation-empty"><img src="./assets/narwhal-icon.png"/><h2>{activityOpen ? 'Activity will appear here.' : 'Start with a clear task.'}</h2><p>{activityOpen ? 'Agent progress and meaningful tool work will stay quietly available here.' : 'Ask the local Agent to explore, build, fix or explain something in this workspace.'}</p></div>}</div><Composer running={conversation.running} configuration={configuration} hasSession={!!conversation.selectedSessionId} selectModel={selectModel} selectPermission={selectPermission} send={send} cancel={cancel}/></div> }
-function normalizeActivity(item: ChatItem) {
-  const descriptor = classifyActivity(
-    item.kind === 'error' ? 'error' : 'activity',
+function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string) => void; cancel: () => void }) {
+  const trajectoryData = useMemo(() => buildTrajectoryData(conversation.trajectory), [conversation.trajectory])
+  const [duration, setDuration] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedRecord, setSelectedRecord] = useState<number | null>(null)
+  const selectedRecordData = useMemo(() => {
+    if (selectedRecord === null) return null
+    for (const turn of trajectoryData.turns) {
+      const found = turn.records.find((r) => r.index === selectedRecord)
+      if (found) return found
+    }
+    return null
+  }, [selectedRecord, trajectoryData])
+  const timeline = useRef<HTMLDivElement>(null)
+  const followOutput = useRef(true)
+  useEffect(() => {
+    if (conversation.running) followOutput.current = true
+    const element = timeline.current
+    if (element && followOutput.current) element.scrollTo({ top: element.scrollHeight, behavior: conversation.running ? 'auto' : 'smooth' })
+  }, [trajectoryOpen, conversation.running, trajectoryData])
+  const trackScroll = () => {
+    const element = timeline.current
+    if (element) followOutput.current = element.scrollHeight - element.scrollTop - element.clientHeight < 48
+  }
+  const turnCount = trajectoryData.turns.length
+  const callCount = trajectoryData.kindCounts.tool + trajectoryData.kindCounts.subtool
+  const chatContent = conversation.messages.length
+    ? conversation.messages.map((item) => <TimelineItem key={item.id} item={item} trajectory={false}/>)
+    : <div className="conversation-empty"><img src="./assets/narwhal-icon.png"/><h2>Start with a clear task.</h2><p>Ask the local Agent to explore, build, fix or explain something in this workspace.</p></div>
+  const trajectoryContent = (
+    <div className="trajectory-view-root">
+      <TrajectoryToolbar duration={duration} onDurationChange={setDuration} searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} turnCount={turnCount} callCount={callCount}/>
+      <TrajectoryTimeline spans={trajectoryData.spans} selectedIndex={selectedRecord} onSelect={setSelectedRecord}/>
+      <div className="trajectory-main">
+        {trajectoryData.turns.length ? (
+          <TrajectoryTable turns={trajectoryData.turns} selectedIndex={selectedRecord} onSelect={setSelectedRecord} searchQuery={searchQuery}/>
+        ) : (
+          <div className="trajectory-empty"><img src="./assets/narwhal-icon.png"/><h2>Trajectory will appear here.</h2><p>Agent execution events — turns, tool calls, context updates — appear here as they happen.</p></div>
+        )}
+      </div>
+      {selectedRecordData && <TrajectoryInspector record={selectedRecordData} onClose={() => setSelectedRecord(null)}/>}
+    </div>
+  )
+  return (
+    <div className="native-conversation">
+      <div className="conversation-head">
+        <div><p>Local Agent</p><h1>{trajectoryOpen ? 'Trajectory' : 'Chat'}</h1></div>
+        <div className="segmented">
+          <button className={!trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(false)}>Chat</button>
+          <button className={trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(true)}>Trajectory</button>
+        </div>
+      </div>
+      <div className={`timeline ${trajectoryOpen ? 'trajectory-view' : ''}`} ref={timeline} onScroll={trackScroll}>
+        {trajectoryOpen ? trajectoryContent : chatContent}
+      </div>
+      <Composer running={conversation.running} configuration={configuration} hasSession={!!conversation.selectedSessionId} selectModel={selectModel} selectPermission={selectPermission} send={send} cancel={cancel}/>
+    </div>
+  )
+}
+function normalizeTrajectory(item: ChatItem) {
+  const descriptor = classifyTrajectory(
+    item.kind === 'error' ? 'error' : 'trajectory',
     item.label,
     item.text,
     item.kind,
@@ -92,8 +155,8 @@ function normalizeActivity(item: ChatItem) {
     hidden: descriptor.hidden,
   }
 }
-function activityPhases(items: readonly ChatItem[]) { const phases: Array<{ id: string; summary: string; items: ChatItem[] }> = []; for (const item of items) { const normalized = normalizeActivity(item); if (normalized.hidden) continue; const previous = phases[phases.length - 1]; const startsTurn = normalized.label === 'Turn started'; const duplicate = previous?.items.length && normalizeActivity(previous.items[previous.items.length - 1]).label === normalized.label && normalized.label !== 'Turn completed'; if (duplicate) continue; const phase = !previous || startsTurn ? { id: item.id, summary: normalized.label, items: [] as ChatItem[] } : previous; if (!previous || startsTurn) phases.push(phase); phase.items.push(item); phase.summary = normalized.label } return phases }
-function TimelineItem({ item, activity }: { item: ChatItem; activity: boolean }) { if (activity || item.kind === 'activity' || item.kind === 'error') { const event = normalizeActivity(item); return <article className={`activity-row ${event.type}`}><span className="activity-mark"><Icon name={event.type}/></span><div><strong>{event.label}</strong><p>{event.text}</p></div></article> } return <article className={`message ${item.kind}`}><p className="message-label">{item.kind === 'user' ? 'You' : 'Narwhal Agent'}{item.streaming && <span className="streaming">Writing</span>}</p><div className="message-body"><MarkdownMessage content={item.text}/></div></article> }
+function trajectoryPhases(_items: readonly ChatItem[]) { return [] }
+function TimelineItem({ item, trajectory }: { item: ChatItem; trajectory: boolean }) { if (trajectory || item.kind === 'trajectory' || item.kind === 'error') { const event = normalizeTrajectory(item); return <article className={`trajectory-row ${event.type}`}><span className="trajectory-mark"><Icon name={event.type}/></span><div><strong>{event.label}</strong><p>{event.text}</p></div></article> } return <article className={`message ${item.kind}`}><p className="message-label">{item.kind === 'user' ? 'You' : 'Narwhal Agent'}{item.streaming && <span className="streaming">Writing</span>}</p><div className="message-body"><MarkdownMessage content={item.text}/></div></article> }
 function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string) => void; cancel: () => void }) { const [text, setText] = useState(''); const input = useRef<HTMLTextAreaElement>(null); useEffect(() => { if (running) { setText(''); input.current?.blur() } }, [running]); const submit = (event: FormEvent) => { event.preventDefault(); const message = text.trim(); if (!message || running) return; setText(''); send(message) }; const permissionValue = configuration.permissionOptions.some((option) => option.id === configuration.defaultPermission) ? configuration.defaultPermission ?? '' : configuration.permissionOptions[0]?.id ?? ''; const modelPickerDisabled = !hasSession || running || !configuration.available; return <form className="composer" onSubmit={submit}><div className="composer-input-row"><textarea ref={input} value={text} onChange={(event) => setText(event.target.value)} placeholder={running ? 'The Agent is working…' : hasSession ? 'Message the local Agent' : 'Select or create a conversation first'} disabled={running} rows={2} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }}/>{running ? <button type="button" className="cancel-turn" onClick={cancel}>Stop</button> : <button className="send" disabled={!text.trim() || !hasSession} aria-label="Send message"><Icon name="arrow"/></button>}</div><div className="composer-controls"><ModelPicker configuration={configuration} disabled={modelPickerDisabled} running={running} selectModel={selectModel}/>{configuration.available && configuration.permissionOptions.length ? <label className="composer-permission"><select aria-label="Permission" title="Set default conversation permission" value={permissionValue} disabled={running} onChange={(event) => void selectPermission(event.target.value)}>{configuration.permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label> : configuration.available ? <span className="composer-permission-empty">Permission presets unavailable</span> : <span className="composer-permission-empty">Agent not connected</span>}</div></form> }
 function modelSelectionValue(provider: string, model: string) { return JSON.stringify([provider, model]) }
 function parseModelSelection(value: string): { provider: string; model: string } | undefined { try { const parsed: unknown = JSON.parse(value); return Array.isArray(parsed) && typeof parsed[0] === 'string' && typeof parsed[1] === 'string' ? { provider: parsed[0], model: parsed[1] } : undefined } catch { return undefined } }

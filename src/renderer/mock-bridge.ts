@@ -72,16 +72,35 @@ const mockWorkbench: WorkbenchSnapshot = {
       { id: 'sess-1:3', kind: 'user', text: 'Yes, implement it.', time: Date.now() - 1600000 },
       { id: 'sess-1:4', kind: 'assistant', text: "I've implemented the composer controls. Here's what was built:\n\n- Provider-grouped model picker\n- Effort selector with reasoning levels\n- Permission preset selector with full-access warning\n- Send/Stop button states\n\nThe controls are fully functional and integrate with the Agent's configuration API.", time: Date.now() - 1000000, streaming: false },
     ],
-    activity: [
-      { id: 'sess-1:10', kind: 'activity', label: 'Turn started', text: 'The Agent started working on your request.', time: Date.now() - 1800000 },
-      { id: 'sess-1:11', kind: 'activity', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 1750000 },
-      { id: 'sess-1:12', kind: 'activity', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 1720000 },
-      { id: 'sess-1:13', kind: 'activity', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 1650000 },
-      { id: 'sess-1:14', kind: 'activity', label: 'Turn completed', text: 'The Agent finished this response.', time: Date.now() - 1600000 },
-      { id: 'sess-1:20', kind: 'activity', label: 'Turn started', text: 'The Agent started working on your request.', time: Date.now() - 1500000 },
-      { id: 'sess-1:21', kind: 'activity', label: 'Updated context', text: 'Workspace context was refreshed for this turn.', time: Date.now() - 1450000 },
-      { id: 'sess-1:22', kind: 'activity', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 600000 },
-      { id: 'sess-1:23', kind: 'activity', label: 'Turn completed', text: 'The Agent finished this response.', time: Date.now() - 500000 },
+    trajectory: [
+      { id: 'sess-1:1', kind: 'user', text: 'Could you analyze the project and find bottlenecks?', time: Date.now() - 2000000 },
+      { id: 'sess-1:10', kind: 'trajectory', label: 'Turn started', text: 'The Agent started working on your request.', time: Date.now() - 1950000 },
+      { id: 'sess-1:11', kind: 'trajectory', label: 'Updated context', text: 'Workspace context was refreshed for this turn.', time: Date.now() - 1900000 },
+      { id: 'sess-1:12', kind: 'trajectory', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 1850000 },
+      { id: 'sess-1:13', kind: 'trajectory', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 1800000 },
+      { id: 'sess-1:14', kind: 'assistant', text: "I've analyzed the project. Here are the main bottlenecks:\n\n1. The configuration loading is serial instead of parallel\n2. The model list is refetched on every turn\n3. The bridge emits events too frequently\n\nWould you like me to fix these?", time: Date.now() - 1750000 },
+      { id: 'sess-1:15', kind: 'trajectory', label: 'Turn completed', text: 'The Agent finished this response.', time: Date.now() - 1700000 },
+      { id: 'sess-1:2', kind: 'user', text: 'Yes, please fix all three issues.', time: Date.now() - 1500000 },
+      { id: 'sess-1:20', kind: 'trajectory', label: 'Turn started', text: 'The Agent started working on your request.', time: Date.now() - 1450000 },
+      { id: 'sess-1:21', kind: 'trajectory', label: 'Updated context', text: 'Workspace context was refreshed for this turn.', time: Date.now() - 1400000 },
+      { id: 'sess-1:22', kind: 'trajectory', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 1350000 },
+      { id: 'sess-1:23', kind: 'trajectory', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 1300000 },
+      { id: 'sess-1:24', kind: 'trajectory', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 1250000 },
+      { id: 'sess-1:25', kind: 'trajectory', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 1200000 },
+      { id: 'sess-1:26', kind: 'assistant', text: 'All three optimizations are now in place. The bridge uses parallel RPC calls, caches model configs per session, and throttles state emissions.', time: Date.now() - 1100000 },
+      { id: 'sess-1:27', kind: 'trajectory', label: 'Turn completed', text: 'The Agent finished this response.', time: Date.now() - 1050000 },
+      { id: 'sess-1:3', kind: 'user', text: 'Great. Show me the diff.', time: Date.now() - 900000 },
+      { id: 'sess-1:30', kind: 'trajectory', label: 'Turn started', text: 'The Agent started working on your request.', time: Date.now() - 850000 },
+      { id: 'sess-1:31', kind: 'trajectory', label: 'Updated context', text: 'Workspace context was refreshed for this turn.', time: Date.now() - 800000 },
+      { id: 'sess-1:32', kind: 'trajectory', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 750000 },
+      { id: 'sess-1:33', kind: 'trajectory', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 700000 },
+      { id: 'sess-1:34', kind: 'trajectory', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 650000 },
+      { id: 'sess-1:35', kind: 'trajectory', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 600000 },
+      { id: 'sess-1:36', kind: 'trajectory', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 550000 },
+      { id: 'sess-1:37', kind: 'trajectory', label: 'Used local tool', text: 'The Agent is working in the local workspace.', time: Date.now() - 500000 },
+      { id: 'sess-1:38', kind: 'trajectory', label: 'Step completed', text: 'The Agent completed a work step.', time: Date.now() - 450000 },
+      { id: 'sess-1:39', kind: 'assistant', text: "Here's the diff summary:\n\n**host-bridge.ts**\n- Replaced `Promise.all` with `Promise.allSettled` for independent RPC tolerance\n- Added model/config caching per session\n- Throttled state emissions to 200ms\n\n**main.tsx**\n- Added `useMemo` for derived trajectory data\n- Added selection state for trajectory records", time: Date.now() - 400000 },
+      { id: 'sess-1:40', kind: 'trajectory', label: 'Turn completed', text: 'The Agent finished this response.', time: Date.now() - 350000 },
     ],
     running: false,
   },
@@ -270,7 +289,7 @@ const _mockBridge = Object.freeze({
       sessions: [...currentWorkbench.conversation.sessions, { id: `sess-${Date.now()}`, title: 'New conversation', updatedAt: Date.now(), running: false }],
       selectedSessionId: `sess-${Date.now()}`,
       messages: [],
-      activity: [],
+      trajectory: [],
       running: false,
     }
     currentWorkbench = { ...currentWorkbench, conversation: conv }
@@ -280,7 +299,7 @@ const _mockBridge = Object.freeze({
   },
 
   selectSession: async (sessionId: string) => {
-    const conv: AgentConversation = { ...currentWorkbench.conversation, selectedSessionId: sessionId, messages: [], activity: [], running: false }
+    const conv: AgentConversation = { ...currentWorkbench.conversation, selectedSessionId: sessionId, messages: [], trajectory: [], running: false }
     currentWorkbench = { ...currentWorkbench, conversation: conv }
     emitWorkbench()
     emitConversation()

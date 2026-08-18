@@ -6,8 +6,8 @@ export interface Deliverable { readonly relativePath: string; readonly label: st
 export interface Workspace { readonly id: string; readonly name: string; readonly displayPath: string; readonly lastOpenedAt: string }
 export interface GitChange { readonly path: string; readonly kind: string }
 export interface AgentSession { readonly id: string; readonly title: string; readonly updatedAt: number; readonly running: boolean }
-export interface ChatItem { readonly id: string; readonly kind: 'user' | 'assistant' | 'activity' | 'error'; readonly text: string; readonly label?: string; readonly time: number; readonly streaming?: boolean }
-export interface AgentConversation { readonly sessions: readonly AgentSession[]; readonly selectedSessionId?: string; readonly messages: readonly ChatItem[]; readonly activity: readonly ChatItem[]; readonly running: boolean }
+export interface ChatItem { readonly id: string; readonly kind: 'user' | 'assistant' | 'trajectory' | 'error'; readonly text: string; readonly label?: string; readonly time: number; readonly streaming?: boolean }
+export interface AgentConversation { readonly sessions: readonly AgentSession[]; readonly selectedSessionId?: string; readonly messages: readonly ChatItem[]; readonly trajectory: readonly ChatItem[]; readonly running: boolean }
 export interface WorkbenchSnapshot { readonly workspaces: readonly Workspace[]; readonly selectedWorkspaceId?: string; readonly tasks: readonly Task[]; readonly selectedTaskId?: string; readonly deliverables: readonly Deliverable[]; readonly panelOpen: boolean; readonly git: { readonly branch?: string; readonly changes: readonly GitChange[] }; readonly conversation: AgentConversation }
 export interface AgentSnapshot { readonly state: AgentState; readonly origin?: string }
 export interface DesktopSettings { readonly appVersion: string; readonly runtimeVersion: string; readonly dataDirectory: string }

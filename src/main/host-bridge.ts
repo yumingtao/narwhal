@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import type { AgentConfiguration, AgentConversation, AgentSession, ChatItem, CreateProviderResult, CustomProviderCapability, ModelProvider, ProviderSetting } from '../shared/desktop-contract.js'
-import { classifyActivity } from '../shared/activity-classifier.js'
+import { classifyTrajectory } from '../shared/trajectory-classifier.js'
 
 type JsonRecord = Record<string, unknown>
 type Listener = (conversation: AgentConversation) => void
@@ -26,11 +26,11 @@ function eventText(event: JsonRecord): string {
   if (isRecord(chunk.block) && chunk.block.type === 'text') return string(chunk.block.text) ?? ''
   return string(data.name) ?? string(data.message) ?? string(data.reason) ?? ''
 }
-function activityFor(event: JsonRecord, type: string): { readonly label: string; readonly text: string; readonly kind: 'activity' | 'error' } | undefined {
+function trajectoryFor(event: JsonRecord, type: string): { readonly label: string; readonly text: string; readonly kind: 'trajectory' | 'error' } | undefined {
   const data = isRecord(event.data) ? event.data : {}
   const label = string(data.name, 120)
   const text = eventText(event)
-  const descriptor = classifyActivity(type, label, text, 'activity')
+  const descriptor = classifyTrajectory(type, label, text, 'trajectory')
   if (descriptor.hidden) return undefined
   return { label: descriptor.label, text: descriptor.text, kind: descriptor.kind }
 }
@@ -122,12 +122,12 @@ export class HostBridge {
   private sessions: AgentSession[] = []
   private selectedSessionId: string | undefined
   private messages: ChatItem[] = []
-  private activity: ChatItem[] = []
+  private trajectory: ChatItem[] = []
   private listeners = new Set<Listener>()
   private running = false
 
   subscribe(listener: Listener): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
-  snapshot(): AgentConversation { return { sessions: this.sessions, selectedSessionId: this.selectedSessionId, messages: this.messages, activity: this.activity, running: this.running } }
+  snapshot(): AgentConversation { return { sessions: this.sessions, selectedSessionId: this.selectedSessionId, messages: this.messages, trajectory: this.trajectory, running: this.running } }
   private emit(): void { const value = this.snapshot(); for (const listener of this.listeners) listener(value) }
 
   async start(origin: string): Promise<void> {
@@ -176,19 +176,19 @@ export class HostBridge {
       const sessionId = validId(frame.sessionId); const event = isRecord(frame.event) ? frame.event : undefined
       if (!sessionId || !event || sessionId !== this.selectedSessionId) return
       this.ingestEvent(sessionId, event)
-    } else if (type === 'stream/error') this.pushActivity({ id: `stream-${Date.now()}`, kind: 'error', label: 'Agent event stream', text: 'The local Agent stream needs to reconnect.', time: Date.now() })
+    } else if (type === 'stream/error') this.pushTrajectory({ id: `stream-${Date.now()}`, kind: 'error', label: 'Agent event stream', text: 'The local Agent stream needs to reconnect.', time: Date.now() })
   }
   private handleHost(frame: JsonRecord): void {
     const type = string(frame.type, 80); const sessionId = validId(frame.sessionId)
     if (type === 'host/session-status' && sessionId) { if (sessionId === this.selectedSessionId) this.running = frame.running === true; this.sessions = this.sessions.map((item) => item.id === sessionId ? { ...item, running: frame.running === true } : item); this.emit() }
-    if (type === 'host/agent-error' && sessionId === this.selectedSessionId) this.pushActivity({ id: `error-${Date.now()}`, kind: 'error', label: 'Agent error', text: string(frame.message) ?? 'The local Agent reported an error.', time: Date.now() })
+    if (type === 'host/agent-error' && sessionId === this.selectedSessionId) this.pushTrajectory({ id: `error-${Date.now()}`, kind: 'error', label: 'Agent error', text: string(frame.message) ?? 'The local Agent reported an error.', time: Date.now() })
     if (type === 'host/session-added' || type === 'host/session-removed') void this.listSessions()
   }
-  private pushActivity(item: ChatItem): void { this.activity = [...this.activity, item].slice(-MAX_ITEMS); this.emit() }
+  private pushTrajectory(item: ChatItem): void { this.trajectory = [...this.trajectory, item].slice(-MAX_ITEMS); this.emit() }
   private ingestEvent(sessionId: string, event: JsonRecord): void {
     const type = string(event.type, 80) ?? 'event'; const seq = number(event.seq); const time = number(event.time)
     if (type === 'user/message' && (!isRecord(event.data) || !isRecord(event.data.source) || event.data.source.kind !== 'user')) {
-      this.pushActivity({ id: `${sessionId}:${seq}`, kind: 'activity', label: 'Updated context', text: 'Workspace context was refreshed for this turn.', time })
+      this.pushTrajectory({ id: `${sessionId}:${seq}`, kind: 'trajectory', label: 'Updated context', text: 'Workspace context was refreshed for this turn.', time })
       return
     }
     if (type === 'user/message' || type === 'assistant/message') {
@@ -200,8 +200,8 @@ export class HostBridge {
         this.messages = [...this.messages.filter((item) => item.id !== next.id), next].slice(-MAX_ITEMS)
       }
     } else {
-      const activity = activityFor(event, type)
-      if (activity) this.pushActivity({ id: `${sessionId}:${seq}`, kind: activity.kind, label: activity.label, text: activity.text, time })
+      const traj = trajectoryFor(event, type)
+      if (traj) this.pushTrajectory({ id: `${sessionId}:${seq}`, kind: traj.kind, label: traj.label, text: traj.text, time })
       if (type === 'turn/end') {
         this.running = false
         this.messages = this.messages.map((item) => item.id === `${sessionId}:stream` ? { ...item, streaming: false } : item)
@@ -228,18 +228,18 @@ export class HostBridge {
       const title = isRecord(row.projections) && isRecord(row.projections.values) ? string(row.projections.values.title, 120) : undefined
       return [{ id, title: title || (row.blank === true ? 'New conversation' : 'Untitled conversation'), updatedAt: number(row.updatedAt), running: row.running === true }]
     }).sort((a, b) => b.updatedAt - a.updatedAt)
-    if (this.selectedSessionId && !this.sessions.some((item) => item.id === this.selectedSessionId)) { this.selectedSessionId = undefined; this.messages = []; this.activity = []; this.running = false }
+    if (this.selectedSessionId && !this.sessions.some((item) => item.id === this.selectedSessionId)) { this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false }
     this.emit(); return this.snapshot()
   }
   async createSession(cwd: string): Promise<AgentConversation> {
     const value = await this.rpc<{ sessionId?: unknown }>('session.create', { cwd })
     const id = validId(value.sessionId); if (!id) throw new Error('Local Agent returned an invalid session')
-    await this.listSessions(cwd); this.selectedSessionId = id; this.messages = []; this.activity = []; this.running = false; this.emit(); return this.snapshot()
+    await this.listSessions(cwd); this.selectedSessionId = id; this.messages = []; this.trajectory = []; this.running = false; this.emit(); return this.snapshot()
   }
   async selectSession(sessionId: string, cwd: string): Promise<AgentConversation> {
     if (!this.sessions.some((item) => item.id === sessionId)) await this.listSessions(cwd)
     if (!this.sessions.some((item) => item.id === sessionId)) throw new Error('Conversation is not available in this workspace')
-    this.selectedSessionId = sessionId; this.messages = []; this.activity = []; this.running = this.sessions.find((item) => item.id === sessionId)?.running === true; this.emit()
+    this.selectedSessionId = sessionId; this.messages = []; this.trajectory = []; this.running = this.sessions.find((item) => item.id === sessionId)?.running === true; this.emit()
     await this.refreshHistory(sessionId)
     return this.snapshot()
   }
@@ -273,8 +273,8 @@ export class HostBridge {
       const settingsValue = settingsResult.status === 'fulfilled' ? settingsResult.value : { writable: false, namespaces: [] as unknown[] }
       const sessionModels = sessionModelsResult.status === 'fulfilled' ? sessionModelsResult.value : { current: undefined as unknown }
 
-      if (providersResult.status === 'rejected') this.pushActivity({ id: `cfg-providers-${Date.now()}`, kind: 'error', label: 'Provider list unavailable', text: 'Some provider data could not be loaded.', time: Date.now() })
-      if (modelsResult.status === 'rejected') this.pushActivity({ id: `cfg-models-${Date.now()}`, kind: 'error', label: 'Model list unavailable', text: 'Some model data could not be loaded.', time: Date.now() })
+      if (providersResult.status === 'rejected') this.pushTrajectory({ id: `cfg-providers-${Date.now()}`, kind: 'error', label: 'Provider list unavailable', text: 'Some provider data could not be loaded.', time: Date.now() })
+      if (modelsResult.status === 'rejected') this.pushTrajectory({ id: `cfg-models-${Date.now()}`, kind: 'error', label: 'Model list unavailable', text: 'Some model data could not be loaded.', time: Date.now() })
       const namespaces = Array.isArray(settingsValue.namespaces) ? settingsValue.namespaces.filter(isRecord) : []
       const providers = Array.isArray(providersValue.providers) ? providersValue.providers.filter(isRecord) : []
       const references = providers.flatMap((provider) => {
