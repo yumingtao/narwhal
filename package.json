@@ -1,0 +1,81 @@
+{
+  "name": "narwhal-forge-macos",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Narwhal Forge, a local-first personal AI coding workbench for macOS.",
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "pnpm run build && electron .",
+    "dev:web": "vite --config vite.config.ts src/renderer/preview.html --host",
+    "start": "electron .",
+    "stage:runtime": "node scripts/stage-runtime.mjs",
+    "package:mac": "pnpm run build && pnpm run stage:runtime && electron-builder --mac dmg zip"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/ws": "^8.18.1",
+    "@vitejs/plugin-react": "latest",
+    "electron": "43.4.0",
+    "electron-builder": "26.15.3",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "^6.0.3",
+    "vite": "latest"
+  },
+  "pnpm": {
+    "ignoredBuiltDependencies": [
+      "electron-winstaller"
+    ]
+  },
+  "build": {
+    "appId": "com.example.narwhalforge",
+    "productName": "Narwhal Forge",
+    "icon": "build/icon.icns",
+    "asar": true,
+    "disableDefaultIgnoredFiles": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/main/**",
+      "dist/preload/**",
+      "dist/recovery/**",
+      "dist/renderer/**",
+      "runtime/manifest.json",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime/dsh/node_modules",
+        "to": "runtime/dsh/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "runtime/dsh/package.json",
+        "to": "runtime/dsh/package.json"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    }
+  },
+  "dependencies": {
+    "highlight.js": "^11.12.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "ws": "^8.21.3"
+  }
+}

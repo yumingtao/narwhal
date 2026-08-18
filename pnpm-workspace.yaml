@@ -1,0 +1,3 @@
+allowBuilds:
+  # Windows-only optional packaging helper; it is not needed for the macOS target.
+  electron-winstaller: false

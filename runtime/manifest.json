@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "upstreamCommit": "47f943859bef60e4160492346772ded9b24f765a",
+  "dshVersion": "0.1.0-rc.5",
+  "supportedPlatform": "darwin-arm64",
+  "notes": "The packaged application stages a verified compatible Harness runtime into runtime/dsh before distribution."
+}

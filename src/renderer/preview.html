@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Narwhal Forge — Debug Preview</title>
+    <style>
+      /* Make the app fill the browser viewport */
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #121416; }
+      #root { height: 100vh; display: flex; flex-direction: column; }
+      /* Debug badge */
+      .debug-badge {
+        position: fixed; top: 8px; right: 8px; z-index: 9999;
+        padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;
+        background: #392a2b; color: #f0c7c4; border: 1px solid #754245;
+        font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="debug-badge">BROWSER DEV MODE · Mock Bridge</div>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
