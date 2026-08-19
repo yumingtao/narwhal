@@ -1,16 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, CreateProviderResult, DesktopSettings, NarwhalBridge, TaskStatus, WorkbenchSnapshot } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, WorkbenchSnapshot } from '../shared/desktop-contract.js'
 
 const invoke = <T,>(channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload) as Promise<T>
 const bridge: NarwhalBridge = Object.freeze({
   bootstrap: () => invoke<{ agent: AgentSnapshot; workbench: WorkbenchSnapshot; settings: DesktopSettings }>('narwhal:bootstrap'),
   chooseWorkspace: () => invoke<WorkbenchSnapshot>('narwhal:choose-workspace'),
   selectWorkspace: (workspaceId: string) => invoke<WorkbenchSnapshot>('narwhal:select-workspace', { workspaceId }),
-  createTask: (input: { title: string; goal: string }) => invoke<WorkbenchSnapshot>('narwhal:create-task', input),
-  updateTask: (input: { taskId: string; title?: string; goal?: string; status?: TaskStatus }) => invoke<WorkbenchSnapshot>('narwhal:update-task', input),
-  addTodo: (input: { taskId: string; text: string }) => invoke<WorkbenchSnapshot>('narwhal:add-todo', input),
-  toggleTodo: (input: { taskId: string; todoId: string; done: boolean }) => invoke<WorkbenchSnapshot>('narwhal:toggle-todo', input),
-  selectTask: (taskId: string | undefined) => invoke<WorkbenchSnapshot>('narwhal:select-task', { taskId }),
+  createConversation: (input: { title: string; goal: string }) => invoke<WorkbenchSnapshot>('narwhal:create-conversation', input),
+  updateConversation: (input: { conversationId: string; title?: string; goal?: string; status?: ConversationStatus }) => invoke<WorkbenchSnapshot>('narwhal:update-conversation', input),
+  addTodo: (input: { conversationId: string; text: string }) => invoke<WorkbenchSnapshot>('narwhal:add-todo', input),
+  toggleTodo: (input: { conversationId: string; todoId: string; done: boolean }) => invoke<WorkbenchSnapshot>('narwhal:toggle-todo', input),
+  selectConversation: (conversationId: string | undefined) => invoke<WorkbenchSnapshot>('narwhal:select-conversation', { conversationId }),
   setPanelOpen: (open: boolean) => invoke<WorkbenchSnapshot>('narwhal:set-panel-open', { open }),
   pinDeliverable: (input: { relativePath: string; label: string }) => invoke<WorkbenchSnapshot>('narwhal:pin-deliverable', input),
   unpinDeliverable: (relativePath: string) => invoke<WorkbenchSnapshot>('narwhal:unpin-deliverable', { relativePath }),

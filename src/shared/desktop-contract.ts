@@ -1,7 +1,7 @@
 export type AgentState = 'ready' | 'starting' | 'needs-restart'
-export type TaskStatus = 'active' | 'done'
+export type ConversationStatus = 'active' | 'done'
 export interface TodoItem { readonly id: string; readonly text: string; readonly done: boolean }
-export interface Task { readonly id: string; readonly title: string; readonly goal: string; readonly status: TaskStatus; readonly todos: readonly TodoItem[]; readonly createdAt: string; readonly updatedAt: string }
+export interface Conversation { readonly id: string; readonly title: string; readonly goal: string; readonly status: ConversationStatus; readonly todos: readonly TodoItem[]; readonly createdAt: string; readonly updatedAt: string }
 export interface Deliverable { readonly relativePath: string; readonly label: string; readonly pinnedAt: string }
 export interface Workspace { readonly id: string; readonly name: string; readonly displayPath: string; readonly lastOpenedAt: string }
 export interface GitChange { readonly path: string; readonly kind: string }
@@ -9,7 +9,7 @@ export interface AgentSession { readonly id: string; readonly title: string; rea
 export interface ChatItem { readonly id: string; readonly kind: 'user' | 'assistant' | 'trajectory' | 'error'; readonly text: string; readonly label?: string; readonly time: number; readonly streaming?: boolean }
 export interface UsageStats { readonly turns: number; readonly steps: number; readonly llmLatency: number; readonly ttftAvg: number; readonly tokenThroughput: number; readonly cacheHitRate: number; readonly inputTokens: number; readonly outputTokens: number }
 export interface AgentConversation { readonly sessions: readonly AgentSession[]; readonly selectedSessionId?: string; readonly messages: readonly ChatItem[]; readonly trajectory: readonly ChatItem[]; readonly running: boolean; readonly usage?: UsageStats }
-export interface WorkbenchSnapshot { readonly workspaces: readonly Workspace[]; readonly selectedWorkspaceId?: string; readonly tasks: readonly Task[]; readonly selectedTaskId?: string; readonly deliverables: readonly Deliverable[]; readonly panelOpen: boolean; readonly git: { readonly branch?: string; readonly changes: readonly GitChange[] }; readonly conversation: AgentConversation }
+export interface WorkbenchSnapshot { readonly workspaces: readonly Workspace[]; readonly selectedWorkspaceId?: string; readonly conversations: readonly Conversation[]; readonly selectedConversationId?: string; readonly deliverables: readonly Deliverable[]; readonly panelOpen: boolean; readonly git: { readonly branch?: string; readonly changes: readonly GitChange[] }; readonly conversation: AgentConversation }
 export interface AgentSnapshot { readonly state: AgentState; readonly origin?: string }
 export interface DesktopSettings { readonly appVersion: string; readonly runtimeVersion: string; readonly dataDirectory: string }
 export interface ModelEffort { readonly id: string; readonly name: string; readonly description?: string }
@@ -23,11 +23,11 @@ export interface NarwhalBridge {
   bootstrap(): Promise<{ readonly agent: AgentSnapshot; readonly workbench: WorkbenchSnapshot; readonly settings: DesktopSettings }>
   chooseWorkspace(): Promise<WorkbenchSnapshot>
   selectWorkspace(workspaceId: string): Promise<WorkbenchSnapshot>
-  createTask(input: { readonly title: string; readonly goal: string }): Promise<WorkbenchSnapshot>
-  updateTask(input: { readonly taskId: string; readonly title?: string; readonly goal?: string; readonly status?: TaskStatus }): Promise<WorkbenchSnapshot>
-  addTodo(input: { readonly taskId: string; readonly text: string }): Promise<WorkbenchSnapshot>
-  toggleTodo(input: { readonly taskId: string; readonly todoId: string; readonly done: boolean }): Promise<WorkbenchSnapshot>
-  selectTask(taskId?: string): Promise<WorkbenchSnapshot>
+  createConversation(input: { readonly title: string; readonly goal: string }): Promise<WorkbenchSnapshot>
+  updateConversation(input: { readonly conversationId: string; readonly title?: string; readonly goal?: string; readonly status?: ConversationStatus }): Promise<WorkbenchSnapshot>
+  addTodo(input: { readonly conversationId: string; readonly text: string }): Promise<WorkbenchSnapshot>
+  toggleTodo(input: { readonly conversationId: string; readonly todoId: string; readonly done: boolean }): Promise<WorkbenchSnapshot>
+  selectConversation(conversationId?: string): Promise<WorkbenchSnapshot>
   setPanelOpen(open: boolean): Promise<WorkbenchSnapshot>
   pinDeliverable(input: { readonly relativePath: string; readonly label: string }): Promise<WorkbenchSnapshot>
   unpinDeliverable(relativePath: string): Promise<WorkbenchSnapshot>

@@ -2,11 +2,11 @@ import type {
   AgentConfiguration,
   AgentConversation,
   AgentSnapshot,
+  Conversation,
+  ConversationStatus,
   CreateProviderResult,
   DesktopSettings,
   NarwhalBridge,
-  Task,
-  TaskStatus,
   WorkbenchSnapshot,
 } from '../shared/desktop-contract.js'
 
@@ -17,9 +17,9 @@ const mockWorkbench: WorkbenchSnapshot = {
     { id: 'ws-1', name: 'Narwhal Forge', displayPath: '/Users/dev/narwhal-forge', lastOpenedAt: '2026-08-18T10:00:00Z' },
   ],
   selectedWorkspaceId: 'ws-1',
-  tasks: [
+  conversations: [
     {
-      id: 'task-1',
+      id: 'conv-1',
       title: 'Composer controls',
       goal: 'Build model picker, permission picker, and effort selector',
       status: 'active',
@@ -32,19 +32,19 @@ const mockWorkbench: WorkbenchSnapshot = {
       updatedAt: '2026-08-18T06:30:00Z',
     },
     {
-      id: 'task-2',
+      id: 'conv-2',
       title: 'Fix release blockers',
       goal: 'Resolve P0/P1 issues before release',
       status: 'active',
       todos: [
         { id: 'r1', text: 'Fix Promise.all → allSettled', done: false },
-        { id: 'r2', text: 'Better createProvider errors', done: false },
+        { id: 'r2', text: 'Better createConversation errors', done: false },
       ],
       createdAt: '2026-08-18T09:00:00Z',
       updatedAt: '2026-08-18T09:00:00Z',
     },
   ],
-  selectedTaskId: 'task-1',
+  selectedConversationId: 'conv-1',
   deliverables: [
     { relativePath: 'dist/Narwhal Forge.dmg', label: 'macOS build', pinnedAt: '2026-08-17T12:00:00Z' },
     { relativePath: 'release/release-notes.md', label: 'Release notes', pinnedAt: '2026-08-18T07:00:00Z' },
@@ -211,9 +211,9 @@ const _mockBridge = Object.freeze({
     return delay(wb)
   },
 
-  createTask: async (input: { title: string; goal: string }) => {
-    const task: Task = {
-      id: `task-${Date.now()}`,
+  createConversation: async (input: { title: string; goal: string }) => {
+    const conversation: Conversation = {
+      id: `conv-${Date.now()}`,
       title: input.title,
       goal: input.goal,
       status: 'active',
@@ -221,16 +221,16 @@ const _mockBridge = Object.freeze({
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
-    currentWorkbench = { ...currentWorkbench, tasks: [...currentWorkbench.tasks, task], selectedTaskId: task.id }
+    currentWorkbench = { ...currentWorkbench, conversations: [...currentWorkbench.conversations, conversation], selectedConversationId: conversation.id }
     emitWorkbench()
     return delay(currentWorkbench)
   },
 
-  updateTask: async (input: { readonly taskId: string; readonly title?: string; readonly goal?: string; readonly status?: TaskStatus }) => {
+  updateConversation: async (input: { readonly conversationId: string; readonly title?: string; readonly goal?: string; readonly status?: ConversationStatus }) => {
     currentWorkbench = {
       ...currentWorkbench,
-      tasks: currentWorkbench.tasks.map((t) =>
-        t.id === input.taskId
+      conversations: currentWorkbench.conversations.map((t) =>
+        t.id === input.conversationId
           ? { ...t, ...(input.title !== undefined && { title: input.title }), ...(input.goal !== undefined && { goal: input.goal }), ...(input.status !== undefined && { status: input.status }), updatedAt: new Date().toISOString() }
           : t,
       ),
@@ -239,11 +239,11 @@ const _mockBridge = Object.freeze({
     return delay(currentWorkbench)
   },
 
-  addTodo: async (input: { readonly taskId: string; readonly text: string }) => {
+  addTodo: async (input: { readonly conversationId: string; readonly text: string }) => {
     currentWorkbench = {
       ...currentWorkbench,
-      tasks: currentWorkbench.tasks.map((t) =>
-        t.id === input.taskId
+      conversations: currentWorkbench.conversations.map((t) =>
+        t.id === input.conversationId
           ? { ...t, todos: [...t.todos, { id: `todo-${Date.now()}`, text: input.text, done: false }], updatedAt: new Date().toISOString() }
           : t,
       ),
@@ -252,11 +252,11 @@ const _mockBridge = Object.freeze({
     return delay(currentWorkbench)
   },
 
-  toggleTodo: async (input: { readonly taskId: string; readonly todoId: string; readonly done: boolean }) => {
+  toggleTodo: async (input: { readonly conversationId: string; readonly todoId: string; readonly done: boolean }) => {
     currentWorkbench = {
       ...currentWorkbench,
-      tasks: currentWorkbench.tasks.map((t) =>
-        t.id === input.taskId
+      conversations: currentWorkbench.conversations.map((t) =>
+        t.id === input.conversationId
           ? { ...t, todos: t.todos.map((td) => (td.id === input.todoId ? { ...td, done: input.done } : td)) }
           : t,
       ),
@@ -265,8 +265,8 @@ const _mockBridge = Object.freeze({
     return delay(currentWorkbench)
   },
 
-  selectTask: async (taskId?: string) => {
-    currentWorkbench = { ...currentWorkbench, selectedTaskId: taskId }
+  selectConversation: async (conversationId?: string) => {
+    currentWorkbench = { ...currentWorkbench, selectedConversationId: conversationId }
     emitWorkbench()
     return delay(currentWorkbench)
   },
