@@ -176,15 +176,32 @@ function registerIpc(): void {
   ipcMain.handle('narwhal:set-default-permission', async (event, raw): Promise<AgentConfiguration> => { sender(event); return hostBridge.setDefaultPermission(asString(asRecord(raw).preset, 'permission preset', 100)) })
   ipcMain.handle('narwhal:set-provider-api-key', async (event, raw): Promise<AgentConfiguration> => { sender(event); const value = asRecord(raw); return hostBridge.setProviderApiKey(asString(value.provider, 'provider', 120), asString(value.value, 'API key', 500)) })
   ipcMain.handle('narwhal:set-provider-base-url', async (event, raw): Promise<AgentConfiguration> => { sender(event); const value = asRecord(raw); return hostBridge.setProviderBaseUrl(asString(value.provider, 'provider', 120), asString(value.value, 'base URL', 600)) })
+  ipcMain.handle('narwhal:update-provider', async (event, raw): Promise<AgentConfiguration> => {
+    sender(event)
+    const value = asRecord(raw)
+    const baseUrl = value.baseUrl === undefined ? undefined : asString(value.baseUrl, 'base URL', 600)
+    const modelIds = Array.isArray(value.modelIds)
+      ? value.modelIds.map((m) => asString(m, 'model ID', 160)).filter(Boolean)
+      : undefined
+    return hostBridge.updateProvider({
+      provider: asString(value.provider, 'provider', 120),
+      ...(baseUrl !== undefined && { baseUrl }),
+      ...(modelIds !== undefined && { modelIds }),
+    })
+  })
+  ipcMain.handle('narwhal:delete-provider', async (event, raw): Promise<AgentConfiguration> => { sender(event); const value = asRecord(raw); return hostBridge.deleteProvider(asString(value.providerId, 'provider ID', 120)) })
   ipcMain.handle('narwhal:create-provider', async (event, raw): Promise<CreateProviderResult> => {
     sender(event)
     const value = asRecord(raw)
+    const modelIds = Array.isArray(value.modelIds)
+      ? value.modelIds.map((m) => asString(m, 'model ID', 160)).filter(Boolean)
+      : []
     return hostBridge.createProvider({
       id: asString(value.id, 'provider ID', 80),
       displayName: value.displayName === undefined ? undefined : asString(value.displayName, 'display name', 120),
       baseUrl: asString(value.baseUrl, 'base URL', 600),
       protocol: asString(value.protocol, 'API protocol', 80),
-      modelId: asString(value.modelId, 'model ID', 160),
+      modelIds,
       apiKey: value.apiKey === undefined ? undefined : asString(value.apiKey, 'API key', 500),
     })
   })

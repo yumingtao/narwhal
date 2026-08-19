@@ -103,6 +103,16 @@ const mockWorkbench: WorkbenchSnapshot = {
       { id: 'sess-1:40', kind: 'trajectory', label: 'Turn completed', text: 'The Agent finished this response.', time: Date.now() - 350000 },
     ],
     running: false,
+    usage: {
+      turns: 3,
+      steps: 5,
+      llmLatency: 2100,
+      ttftAvg: 1000,
+      tokenThroughput: 103,
+      cacheHitRate: 0,
+      inputTokens: 8700,
+      outputTokens: 117,
+    },
   },
 }
 
@@ -119,35 +129,37 @@ const mockConfig: AgentConfiguration = {
       id: 'deepseek',
       name: 'DeepSeek',
       models: [
-        { id: 'deepseek-chat', name: 'DeepSeek Chat', description: 'General-purpose chat model', efforts: [{ id: 'low', name: 'Fast', description: 'Quick responses' }, { id: 'medium', name: 'Balanced', description: 'Default reasoning' }, { id: 'high', name: 'Deep', description: 'Thorough analysis' }], defaultEffort: 'medium' },
-        { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', description: 'Advanced reasoning model', efforts: [{ id: 'low', name: 'Fast' }, { id: 'medium', name: 'Balanced' }, { id: 'high', name: 'Deep' }], defaultEffort: 'high' },
+        { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }], defaultEffort: 'high' },
+        { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }], defaultEffort: 'high' },
       ],
     },
     {
       id: 'anthropic',
       name: 'Anthropic',
       models: [
-        { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Balanced intelligence and speed', efforts: [], defaultEffort: undefined },
-        { id: 'claude-4-opus', name: 'Claude 4 Opus', description: 'Maximum intelligence', efforts: [], defaultEffort: undefined },
+        { id: 'claude-4.5-sonnet', name: 'Claude 4.5 Sonnet', efforts: [], defaultEffort: undefined },
+        { id: 'claude-4-opus', name: 'Claude 4 Opus', efforts: [], defaultEffort: undefined },
       ],
     },
     {
       id: 'openai',
       name: 'OpenAI',
       models: [
-        { id: 'gpt-4o', name: 'GPT-4o', description: 'Versatile reasoning model', efforts: [], defaultEffort: undefined },
-        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast and affordable', efforts: [], defaultEffort: undefined },
+        { id: 'gpt-4o', name: 'GPT-4o', efforts: [], defaultEffort: undefined },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', efforts: [], defaultEffort: undefined },
+        { id: 'o3', name: 'o3', efforts: [], defaultEffort: undefined },
+        { id: 'o4-mini', name: 'o4-mini', efforts: [], defaultEffort: undefined },
       ],
     },
   ],
-  defaultPermission: 'normal',
+  defaultPermission: 'workspace-write',
   permissionOptions: [
-    { id: 'normal', label: 'Normal' },
-    { id: 'full', label: 'Full Access' },
     { id: 'read-only', label: 'Read Only' },
+    { id: 'workspace-write', label: 'Workspace Write' },
+    { id: 'full-access', label: 'Full Access' },
   ],
   customProvider: { available: true, protocols: ['openai-compatible', 'anthropic-compatible'] },
-  selectedModel: { provider: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'medium' },
+  selectedModel: { provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'high' },
 }
 
 const mockSettings: DesktopSettings = {
@@ -357,7 +369,81 @@ const _mockBridge = Object.freeze({
 
   setProviderBaseUrl: async () => delay(currentConfig),
 
-  createProvider: async (input: { readonly id: string; readonly displayName?: string; readonly baseUrl: string; readonly protocol: string; readonly modelId: string; readonly apiKey?: string }) => {
+  updateProvider: async (input: { readonly provider: string; readonly baseUrl?: string; readonly modelIds?: readonly string[] }) => {
+    const providerId = input.provider
+    // Update provider baseUrl if provided
+    if (input.baseUrl !== undefined) {
+      currentConfig = {
+        ...currentConfig,
+        providers: currentConfig.providers.map((p) =>
+          p.id === providerId ? { ...p, baseUrl: input.baseUrl } : p
+        ),
+      }
+    }
+    // Update model list if provided
+    if (input.modelIds !== undefined) {
+      const modelIds = input.modelIds.filter((m) => m.trim())
+      currentConfig = {
+        ...currentConfig,
+        models: currentConfig.models.map((m) => {
+          if (m.id === providerId) {
+            return {
+              ...m,
+              models: modelIds.map((modelId) => ({
+                id: modelId.trim(),
+                name: modelId.trim(),
+                efforts: [] as Array<{ id: string; name: string }>,
+                defaultEffort: undefined as string | undefined,
+              })),
+            }
+          }
+          return m
+        }),
+      }
+      // If current selected model was removed, fallback
+      const current = currentConfig.selectedModel
+      if (current?.provider === providerId) {
+        const providerGroup = currentConfig.models.find((m) => m.id === providerId)
+        const stillExists = providerGroup?.models.some((m) => m.id === current.model)
+        if (!stillExists && providerGroup?.models.length) {
+          currentConfig = {
+            ...currentConfig,
+            selectedModel: {
+              provider: providerId,
+              model: providerGroup.models[0].id,
+              reasoningEffort: providerGroup.models[0].defaultEffort,
+            },
+          }
+        }
+      }
+    }
+    return delay(currentConfig)
+  },
+
+  deleteProvider: async (providerId: string) => {
+    currentConfig = {
+      ...currentConfig,
+      providers: currentConfig.providers.filter((p) => p.id !== providerId),
+      models: currentConfig.models.filter((m) => m.id !== providerId),
+    }
+    // If deleted provider was selected, fallback to first available
+    if (currentConfig.selectedModel?.provider === providerId) {
+      const firstAvailable = currentConfig.models[0]
+      if (firstAvailable) {
+        currentConfig = {
+          ...currentConfig,
+          selectedModel: {
+            provider: firstAvailable.id,
+            model: firstAvailable.models[0]?.id ?? '',
+            reasoningEffort: firstAvailable.models[0]?.defaultEffort,
+          },
+        }
+      }
+    }
+    return delay(currentConfig)
+  },
+
+  createProvider: async (input: { readonly id: string; readonly displayName?: string; readonly baseUrl: string; readonly protocol: string; readonly modelIds: readonly string[]; readonly apiKey?: string }) => {
     const newProvider = {
       id: input.id,
       name: input.displayName ?? input.id,
@@ -366,10 +452,16 @@ const _mockBridge = Object.freeze({
       apiKeyWritable: true,
       baseUrl: input.baseUrl,
     }
+    const models = input.modelIds.map((modelId) => ({
+      id: modelId,
+      name: modelId,
+      efforts: [] as Array<{ id: string; name: string }>,
+      defaultEffort: undefined as string | undefined,
+    }))
     const newModelGroup = {
       id: input.id,
       name: input.displayName ?? input.id,
-      models: [{ id: input.modelId, name: input.modelId, description: 'Custom provider model', efforts: [], defaultEffort: undefined }],
+      models,
     }
     currentConfig = {
       ...currentConfig,

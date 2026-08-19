@@ -7,7 +7,8 @@ export interface Workspace { readonly id: string; readonly name: string; readonl
 export interface GitChange { readonly path: string; readonly kind: string }
 export interface AgentSession { readonly id: string; readonly title: string; readonly updatedAt: number; readonly running: boolean }
 export interface ChatItem { readonly id: string; readonly kind: 'user' | 'assistant' | 'trajectory' | 'error'; readonly text: string; readonly label?: string; readonly time: number; readonly streaming?: boolean }
-export interface AgentConversation { readonly sessions: readonly AgentSession[]; readonly selectedSessionId?: string; readonly messages: readonly ChatItem[]; readonly trajectory: readonly ChatItem[]; readonly running: boolean }
+export interface UsageStats { readonly turns: number; readonly steps: number; readonly llmLatency: number; readonly ttftAvg: number; readonly tokenThroughput: number; readonly cacheHitRate: number; readonly inputTokens: number; readonly outputTokens: number }
+export interface AgentConversation { readonly sessions: readonly AgentSession[]; readonly selectedSessionId?: string; readonly messages: readonly ChatItem[]; readonly trajectory: readonly ChatItem[]; readonly running: boolean; readonly usage?: UsageStats }
 export interface WorkbenchSnapshot { readonly workspaces: readonly Workspace[]; readonly selectedWorkspaceId?: string; readonly tasks: readonly Task[]; readonly selectedTaskId?: string; readonly deliverables: readonly Deliverable[]; readonly panelOpen: boolean; readonly git: { readonly branch?: string; readonly changes: readonly GitChange[] }; readonly conversation: AgentConversation }
 export interface AgentSnapshot { readonly state: AgentState; readonly origin?: string }
 export interface DesktopSettings { readonly appVersion: string; readonly runtimeVersion: string; readonly dataDirectory: string }
@@ -41,7 +42,9 @@ export interface NarwhalBridge {
   setDefaultPermission(preset: string): Promise<AgentConfiguration>
   setProviderApiKey(input: { readonly provider: string; readonly value: string }): Promise<AgentConfiguration>
   setProviderBaseUrl(input: { readonly provider: string; readonly value: string }): Promise<AgentConfiguration>
-  createProvider(input: { readonly id: string; readonly displayName?: string; readonly baseUrl: string; readonly protocol: string; readonly modelId: string; readonly apiKey?: string }): Promise<CreateProviderResult>
+  updateProvider(input: { readonly provider: string; readonly baseUrl?: string; readonly modelIds?: readonly string[] }): Promise<AgentConfiguration>
+  deleteProvider(providerId: string): Promise<AgentConfiguration>
+  createProvider(input: { readonly id: string; readonly displayName?: string; readonly baseUrl: string; readonly protocol: string; readonly modelIds: readonly string[]; readonly apiKey?: string }): Promise<CreateProviderResult>
   retryAgent(): Promise<void>
   onAgentState(listener: (state: AgentSnapshot) => void): () => void
   onConversation(listener: (conversation: AgentConversation) => void): () => void

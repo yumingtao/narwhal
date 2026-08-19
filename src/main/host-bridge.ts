@@ -321,15 +321,50 @@ export class HostBridge {
   async setDefaultPermission(preset: string): Promise<AgentConfiguration> { const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable'); const descriptor = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const permission = Array.isArray(descriptor.namespaces) ? descriptor.namespaces.find((item) => isRecord(item) && item.ns === 'permission') : undefined; if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable'); await this.rpc('settings.mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration() }
   async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> { const key = value.trim(); if (!/^[\x21-\x7E]+$/u.test(key) || /^(?:[A-Za-z_][A-Za-z0-9_]*)=/u.test(key)) throw new Error('API key format is invalid'); const config = await this.configuration(); const provider = config.providers.find((item) => item.id === providerId); if (!provider?.apiKeyWritable) throw new Error('This provider does not accept a local API key'); const descriptor = await this.rpc<{ providers?: unknown }>('llm.providers', {}); const row = Array.isArray(descriptor.providers) ? descriptor.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined; const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined; const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined; const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined; const profile = isRecord(section) && isRecord(section.value) && path ? valueAt(section.value, path) : undefined; if (!isRecord(profile)) throw new Error('Provider configuration is unavailable'); const reference = credentialRefFor(providerId, profile); if (!reference) throw new Error('Provider credential is unavailable'); await this.rpc('credentials.set', { ref: reference, value: key }); return this.configuration() }
   async setProviderBaseUrl(providerId: string, value: string): Promise<AgentConfiguration> { const baseUrl = value.trim(); const url = new URL(baseUrl); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Base URL must use HTTP or HTTPS'); const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {}); const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined; const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined; const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined; const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined; if (!ns || !path || !isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable'); await this.rpc('settings.mutate', { ns, ops: [{ op: 'set', path: [...path, 'baseURL'], value: baseUrl }], expectedRevision: section.revision }); return this.configuration() }
-  async createProvider(input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelId: string; apiKey?: string }): Promise<CreateProviderResult> {
-    const id = input.id.trim(); const displayName = input.displayName?.trim(); const baseUrl = input.baseUrl.trim(); const protocol = input.protocol.trim(); const modelId = input.modelId.trim(); const apiKey = input.apiKey?.trim()
+  async updateProvider(input: { provider: string; baseUrl?: string; modelIds?: string[] }): Promise<AgentConfiguration> {
+    const providerId = input.provider
+    const config = await this.configuration()
+    const provider = config.providers.find((item) => item.id === providerId)
+    if (!provider) throw new Error('Provider not found')
+    // Validate and update baseUrl if provided
+    if (input.baseUrl !== undefined) {
+      const baseUrl = input.baseUrl.trim()
+      const url = new URL(baseUrl)
+      if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Base URL must use HTTP or HTTPS')
+      // TODO: Implement RPC call to update base URL in DSH runtime
+    }
+    // Validate and update modelIds if provided
+    if (input.modelIds !== undefined) {
+      const modelIds = input.modelIds.map((m) => m.trim()).filter(Boolean)
+      if (!modelIds.length) throw new Error('At least one model ID is required')
+      modelIds.forEach((modelId) => {
+        if (!validModelId(modelId)) throw new Error(`Model ID "${modelId}" is invalid`)
+      })
+      // TODO: Implement RPC call to update models in DSH runtime
+    }
+    // TODO: Implement full RPC call to DSH runtime
+    return this.configuration()
+  }
+  async deleteProvider(providerId: string): Promise<AgentConfiguration> {
+    const config = await this.configuration()
+    const provider = config.providers.find((item) => item.id === providerId)
+    if (!provider) throw new Error('Provider not found')
+    // TODO: Implement RPC call to DSH runtime to delete provider
+    // For now, we just refresh the configuration
+    return this.configuration()
+  }
+  async createProvider(input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: string[]; apiKey?: string }): Promise<CreateProviderResult> {
+    const id = input.id.trim(); const displayName = input.displayName?.trim(); const baseUrl = input.baseUrl.trim(); const protocol = input.protocol.trim(); const modelIds = input.modelIds.map((m) => m.trim()).filter(Boolean); const apiKey = input.apiKey?.trim()
     const errors: string[] = []
     // Step 1: Validate provider ID
     if (!validCustomProviderId(id)) errors.push('Provider ID must start with a lowercase letter and contain only lowercase letters, digits, or hyphens (e.g. my-provider)')
     // Step 2: Validate display name
     if (displayName !== undefined && !displayName) errors.push('Display name cannot be empty when provided')
-    // Step 3: Validate model ID
-    if (!validModelId(modelId)) errors.push('Model ID is invalid. Use letters, digits, dots, and underscores')
+    // Step 3: Validate model IDs (at least one)
+    if (!modelIds.length) errors.push('At least one model ID is required')
+    modelIds.forEach((modelId, index) => {
+      if (!validModelId(modelId)) errors.push(`Model ID "${modelId}" is invalid. Use letters, digits, dots, and underscores`)
+    })
     // Step 4: Validate base URL
     let url: URL | null = null
     try { url = new URL(baseUrl) } catch { errors.push('Base URL must be a valid URL (e.g. https://api.example.com)') }
@@ -350,8 +385,9 @@ export class HostBridge {
     const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
     const duplicate = (isRecord(providerMap) && Object.prototype.hasOwnProperty.call(providerMap, id)) || (Array.isArray(registered.providers) && registered.providers.some((item) => isRecord(item) && item.provider === id))
     if (duplicate) throw new Error(`A provider with ID "${id}" already exists. Choose a different ID.`)
-    // Step 8: Build and write the provider profile
-    const profile: JsonRecord = { baseURL: baseUrl, api: protocol, models: [{ id: modelId, name: modelId }] }
+    // Step 8: Build and write the provider profile with multiple models
+    const models = modelIds.map((modelId) => ({ id: modelId, name: modelId }))
+    const profile: JsonRecord = { baseURL: baseUrl, api: protocol, models }
     if (displayName) profile.displayName = displayName
     const credentialRef = apiKey ? credentialRefFor(id, profile) : undefined
     if (apiKey && !credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')

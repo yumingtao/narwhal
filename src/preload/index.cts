@@ -25,7 +25,9 @@ const bridge: NarwhalBridge = Object.freeze({
   setDefaultPermission: (preset: string) => invoke<AgentConfiguration>('narwhal:set-default-permission', { preset }),
   setProviderApiKey: (input: { provider: string; value: string }) => invoke<AgentConfiguration>('narwhal:set-provider-api-key', input),
   setProviderBaseUrl: (input: { provider: string; value: string }) => invoke<AgentConfiguration>('narwhal:set-provider-base-url', input),
-  createProvider: (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelId: string; apiKey?: string }) => invoke<CreateProviderResult>('narwhal:create-provider', input),
+  updateProvider: (input: { provider: string; baseUrl?: string; modelIds?: string[] }) => invoke<AgentConfiguration>('narwhal:update-provider', input),
+  deleteProvider: (providerId: string) => invoke<AgentConfiguration>('narwhal:delete-provider', { providerId }),
+  createProvider: (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: string[]; apiKey?: string }) => invoke<CreateProviderResult>('narwhal:create-provider', input),
   retryAgent: () => invoke<void>('narwhal:retry-agent'),
   onAgentState: (listener: (state: AgentSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: AgentSnapshot) => listener(state)
