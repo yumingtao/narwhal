@@ -105,7 +105,7 @@ async function chooseWorkspace(): Promise<WorkbenchSnapshot> {
   if (result.canceled || !result.filePaths[0]) return snapshot()
   const path = await realpath(result.filePaths[0]); const now = new Date().toISOString()
   let workspace = store.workspaces.find((item) => item.path === path)
-  if (!workspace) { workspace = { id: randomUUID(), path, name: basename(path), lastOpenedAt: now, conversations: [], deliverables: [], panelOpen: true }; store.workspaces.unshift(workspace) }
+  if (!workspace) { workspace = { id: randomUUID(), path, name: basename(path), lastOpenedAt: now, conversations: [], deliverables: [], panelOpen: false }; store.workspaces.unshift(workspace) }
   workspace.lastOpenedAt = now; store.selectedWorkspaceId = workspace.id; store.workspaces = store.workspaces.slice(0, 12); await persist()
   if (agent.state === 'ready') { await hostBridge.listSessions(workspace.path); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path) }
   return snapshot()

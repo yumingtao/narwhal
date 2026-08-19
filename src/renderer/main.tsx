@@ -39,6 +39,15 @@ const markdownComponents: Components = {
 }
 export function MarkdownMessage({ content }: { content: string }) { return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>{content}</ReactMarkdown> }
 
+const DEFAULT_SIDEBAR_WIDTH = 236
+const MIN_SIDEBAR_WIDTH = 160
+const MAX_SIDEBAR_WIDTH = 400
+const SIDEBAR_WIDTH_KEY = 'narwhal:sidebar-width'
+const DEFAULT_PANEL_WIDTH = 304
+const MIN_PANEL_WIDTH = 220
+const MAX_PANEL_WIDTH = 500
+const PANEL_WIDTH_KEY = 'narwhal:panel-width'
+
 function App() {
   const [workbench, setWorkbench] = useState<WorkbenchSnapshot>(blank)
   const [conversation, setConversation] = useState<AgentConversation>(blankConversation)
@@ -49,6 +58,14 @@ function App() {
   const [deliverableDraft, setDeliverableDraft] = useState(false)
   const [trajectoryOpen, setTrajectoryOpen] = useState(false)
   const [error, setError] = useState('')
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY)
+    return stored ? Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, parseInt(stored, 10))) : DEFAULT_SIDEBAR_WIDTH
+  })
+  const [panelWidth, setPanelWidth] = useState(() => {
+    const stored = localStorage.getItem(PANEL_WIDTH_KEY)
+    return stored ? Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, parseInt(stored, 10))) : DEFAULT_PANEL_WIDTH
+  })
   const selectedConversation = useMemo(() => workbench.conversations.find((conv) => conv.id === workbench.selectedConversationId) ?? workbench.conversations[0], [workbench])
   const workspace = workbench.workspaces.find((item) => item.id === workbench.selectedWorkspaceId)
   const mutate = async (operation: () => Promise<WorkbenchSnapshot>) => { try { setError(''); const next = await operation(); setWorkbench(next); setConversation(next.conversation) } catch { setError('We couldn’t complete that action. Your local files were not changed.') } }
@@ -63,9 +80,30 @@ function App() {
   const selectModel = async (input: { provider: string; model: string; reasoningEffort?: string }) => { try { setConfiguration(await api.selectAgentModel(input)) } catch { setError('The selected model could not be applied. Nothing was changed.') } }
   const selectPermission = async (preset: string) => { if (preset.toLowerCase().includes('full') && !window.confirm('Full access can allow unrestricted local tool operations. Continue?')) return; try { setConfiguration(await api.setDefaultPermission(preset)) } catch { setError('The selected permission could not be applied. Nothing was changed.') } }
   useEffect(() => { if (workspace && agent.state === 'ready') void agentCall(api.listSessions) }, [workspace?.id, agent.state])
+  useEffect(() => { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)) }, [sidebarWidth])
+  useEffect(() => { localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)) }, [panelWidth])
+  const layoutStyle = workbench.panelOpen
+    ? { gridTemplateColumns: `${sidebarWidth}px minmax(390px, 1fr) 5px ${panelWidth}px` }
+    : { gridTemplateColumns: `${sidebarWidth}px minmax(390px, 1fr)` }
+  const onPanelResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = panelWidth
+    const onMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, startWidth - (ev.clientX - startX)))
+      setPanelWidth(newWidth)
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+  const onPanelDoubleClick = () => { setPanelWidth(DEFAULT_PANEL_WIDTH) }
   return <main className="app-shell">
     <header className="titlebar"><div className="drag-space"/><div className="brand no-drag"><img src="./assets/narwhal-icon.png"/><span>Narwhal Forge</span></div><div className="crumb no-drag">{workspace ? <><span>{workspace.name}</span><small>Personal workspace</small></> : <span>Choose a workspace</span>}</div><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
-    <section className="layout">
+    <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}`} style={layoutStyle}>
       <aside className="sidebar">
         <button className="new-task" disabled={!workspace} onClick={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))}><Icon name="plus"/>New conversation</button>
         <SideBar workbench={workbench} conversation={conversation} workspace={workspace} agent={agent} selectedConversation={selectedConversation} choose={() => void mutate(api.chooseWorkspace)} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={() => void agentCall(api.createSession)} selectSession={(id) => void agentCall(() => api.selectSession(id))} selectConversation={(id) => void mutate(() => api.selectConversation(id))}/>
@@ -76,10 +114,11 @@ function App() {
         {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))}/>} 
         <footer className="statusbar">{conversation.usage ? <span className="usage-metrics"><strong>{conversation.usage.turns}</strong> turns<em/>{conversation.usage.steps} steps<em/>LLM <strong>{formatLatency(conversation.usage.llmLatency)}</strong><em/>TTFT avg <strong>{formatLatency(conversation.usage.ttftAvg)}</strong><em/><strong>{conversation.usage.tokenThroughput}</strong> tok/s<em/>Cache hit <strong>{conversation.usage.cacheHitRate}%</strong><em/>Input <strong>{formatTokens(conversation.usage.inputTokens)} tok</strong><em/>Output <strong>{conversation.usage.outputTokens} tok</strong></span> : null}<span className="statusbar-right"><span><Icon name="branch"/>{workbench.git.branch ?? 'No Git repository'}</span></span></footer>
       </section>
-      {workbench.panelOpen && <button className="drawer-backdrop" aria-label="Close work context" onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
-      <button className="panel-trigger" onClick={() => void mutate(() => api.setPanelOpen(!workbench.panelOpen))} aria-label="Toggle work context"><Icon name="panel"/></button>
-      <aside className={workbench.panelOpen ? 'context-panel open' : 'context-panel'}><div className="panel-head"><div><p>Work context</p><h2>{selectedConversation?.title ?? 'No conversation selected'}</h2></div><button title="Close panel" onClick={() => void mutate(() => api.setPanelOpen(false))}><Icon name="close"/></button></div>{!workspace ? <p className="panel-empty">Choose a workspace to keep its plan, changed files and deliverables together.</p> : <><ConversationSection conversation={selectedConversation} onSelect={(conversationId) => void mutate(() => api.selectConversation(conversationId))} onNew={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} onUpdate={(input) => void mutate(() => api.updateConversation(input))} onTodo={(conversationId, todoId, done) => void mutate(() => api.toggleTodo({ conversationId, todoId, done }))} onAddTodo={(conversationId, text) => void mutate(() => api.addTodo({ conversationId, text }))}/><ChangesSection changes={workbench.git.changes}/><DeliverablesSection entries={workbench.deliverables} onNew={() => setDeliverableDraft(true)} onReveal={(path) => void api.revealDeliverable(path)} onRemove={(path) => void mutate(() => api.unpinDeliverable(path))}/></>}</aside>
+      {workbench.panelOpen && <div className="panel-resizer" onMouseDown={onPanelResizeStart} onDoubleClick={onPanelDoubleClick} title="Drag to resize · Double-click to reset"/>} 
+      {workbench.panelOpen && <aside className="context-panel open" style={{ width: panelWidth }}><div className="panel-head"><div><p>Work context</p><h2>{selectedConversation?.title ?? 'No conversation selected'}</h2></div><button title="Close panel" onClick={() => void mutate(() => api.setPanelOpen(false))}><Icon name="close"/></button></div>{!workspace ? <p className="panel-empty">Choose a workspace to keep its plan, changed files and deliverables together.</p> : <><ConversationSection conversation={selectedConversation} onSelect={(conversationId) => void mutate(() => api.selectConversation(conversationId))} onNew={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} onUpdate={(input) => void mutate(() => api.updateConversation(input))} onTodo={(conversationId, todoId, done) => void mutate(() => api.toggleTodo({ conversationId, todoId, done }))} onAddTodo={(conversationId, text) => void mutate(() => api.addTodo({ conversationId, text }))}/><ChangesSection changes={workbench.git.changes}/><DeliverablesSection entries={workbench.deliverables} onNew={() => setDeliverableDraft(true)} onReveal={(path) => void api.revealDeliverable(path)} onRemove={(path) => void mutate(() => api.unpinDeliverable(path))}/></>}</aside>}
     </section>
+    {workbench.panelOpen && <button className="drawer-backdrop" aria-label="Close work context" onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
+    <button className={`panel-trigger${workbench.panelOpen ? ' open' : ''}`} style={workbench.panelOpen ? { right: panelWidth + 11 } : undefined} onClick={() => void mutate(() => api.setPanelOpen(!workbench.panelOpen))} aria-label="Toggle work context"><Icon name="panel"/></button>
     {deliverableDraft && <DeliverableDialog close={() => setDeliverableDraft(false)} save={(relativePath, label) => mutate(() => api.pinDeliverable({ relativePath, label })).then(() => setDeliverableDraft(false))}/>} 
     {settingsOpen && <SettingsDialog settings={settings} agent={agent} close={() => setSettingsOpen(false)} restart={() => void api.retryAgent()}/>} 
   </main>

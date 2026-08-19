@@ -49,7 +49,7 @@ const mockWorkbench: WorkbenchSnapshot = {
     { relativePath: 'dist/Narwhal Forge.dmg', label: 'macOS build', pinnedAt: '2026-08-17T12:00:00Z' },
     { relativePath: 'release/release-notes.md', label: 'Release notes', pinnedAt: '2026-08-18T07:00:00Z' },
   ],
-  panelOpen: true,
+  panelOpen: false,
   git: {
     branch: 'main',
     changes: [
