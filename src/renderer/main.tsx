@@ -83,8 +83,24 @@ function App() {
   useEffect(() => { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)) }, [sidebarWidth])
   useEffect(() => { localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)) }, [panelWidth])
   const layoutStyle = workbench.panelOpen
-    ? { gridTemplateColumns: `${sidebarWidth}px minmax(390px, 1fr) 5px ${panelWidth}px` }
-    : { gridTemplateColumns: `${sidebarWidth}px minmax(390px, 1fr)` }
+    ? { gridTemplateColumns: `${sidebarWidth}px 5px minmax(390px, 1fr) 5px ${panelWidth}px` }
+    : { gridTemplateColumns: `${sidebarWidth}px 5px minmax(390px, 1fr)` }
+  const onSidebarResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = sidebarWidth
+    const onMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, startWidth + ev.clientX - startX))
+      setSidebarWidth(newWidth)
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }
+  const onSidebarDoubleClick = () => { setSidebarWidth(DEFAULT_SIDEBAR_WIDTH) }
   const onPanelResizeStart = (e: React.MouseEvent) => {
     e.preventDefault()
     const startX = e.clientX
@@ -109,6 +125,7 @@ function App() {
         <SideBar workbench={workbench} conversation={conversation} workspace={workspace} agent={agent} selectedConversation={selectedConversation} choose={() => void mutate(api.chooseWorkspace)} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={() => void agentCall(api.createSession)} selectSession={(id) => void agentCall(() => api.selectSession(id))} selectConversation={(id) => void mutate(() => api.selectConversation(id))}/>
         <div className="side-foot"><button onClick={() => setSettingsOpen(true)}><Icon name="settings"/>Settings</button></div>
       </aside>
+      <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
         {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))}/>} 
