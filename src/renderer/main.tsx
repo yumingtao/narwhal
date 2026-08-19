@@ -118,7 +118,7 @@ function App() {
   }
   const onPanelDoubleClick = () => { setPanelWidth(DEFAULT_PANEL_WIDTH) }
   return <main className="app-shell">
-    <header className="titlebar"><div className="drag-space"/><div className="brand no-drag"><img src="./assets/narwhal-icon.png"/><span>Narwhal Forge</span></div><div className="crumb no-drag">{workspace ? <><span>{workspace.name}</span><small>Personal workspace</small></> : <span>Choose a workspace</span>}</div><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
+    <header className="titlebar"><div className="drag-space"/><div className="brand no-drag"><img src="./assets/narwhal-icon.png"/><span className="brand-name">Narwhal Forge</span><span className="brand-sub">based on DeepSeek Harness</span></div><div className="crumb no-drag">{workspace ? <><span>{workspace.name}</span><small>Personal workspace</small></> : <span>Choose a workspace</span>}</div><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
     <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}`} style={layoutStyle}>
       <aside className="sidebar">
         <button className="new-task" disabled={!workspace} onClick={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))}><Icon name="plus"/>New conversation</button>
