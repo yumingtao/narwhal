@@ -9,7 +9,7 @@ export type IconName =
   | 'settings' | 'close' | 'plus' | 'branch' | 'panel'
   | 'folder' | 'folder-plus' | 'model' | 'provider' | 'shield' | 'runtime'
   | 'arrow' | 'file' | 'work' | 'complete' | 'request' | 'context' | 'error' | 'info'
-  | 'stop'
+  | 'stop' | 'search' | 'sliders' | 'more' | 'chevron' | 'pencil' | 'trash'
 
 type IconDef = (size: number) => ReactNode
 
@@ -169,9 +169,62 @@ export const stop: IconDef = (s) => (
   </svg>
 )
 
+/** IconSearchOutline16 — magnifying glass */
+export const search: IconDef = (s) => (
+  <svg width={s} height={s} viewBox={VB16} fill="none" xmlns={NS}>
+    <path d="M6.86854 2.50004C4.35924 2.50004 2.3291 4.53018 2.3291 7.03948C2.3291 9.54878 4.35924 11.5789 6.86854 11.5789C7.82728 11.5789 8.71138 11.2708 9.37932 10.7661L12.1297 13.5165C12.4226 13.8094 12.8974 13.8094 13.1903 13.5165C13.4832 13.2236 13.4832 12.7488 13.1903 12.4559L10.44 9.70548C10.9447 9.03754 11.2528 8.15344 11.2528 7.1947C11.2528 4.6854 9.22267 2.50004 6.86854 2.50004ZM3.8291 7.03948C3.8291 5.25818 5.08724 3.74108 6.86854 3.74108C8.64984 3.74108 9.90798 5.25818 9.90798 7.03948C9.90798 8.82078 8.64984 10.3379 6.86854 10.3379C5.08724 10.3379 3.8291 8.82078 3.8291 7.03948Z" fill="currentColor"/>
+  </svg>
+)
+
+/** IconSlidersOutline16 — filter/sliders */
+export const sliders: IconDef = (s) => (
+  <svg width={s} height={s} viewBox={VB16} fill="none" xmlns={NS}>
+    <path d="M6.58315 3.16667C6.58315 3.62686 6.95966 4 7.41989 4H14.5831C15.0433 4 15.4199 3.62686 15.4199 3.16667C15.4199 2.70648 15.0433 2.33334 14.5831 2.33334H7.41989C6.95966 2.33334 6.58315 2.70648 6.58315 3.16667Z" fill="currentColor"/>
+    <path d="M1.41975 12.8333C1.41975 13.2935 1.79626 13.6667 2.25649 13.6667H14.5832C15.0434 13.6667 15.42 13.2935 15.42 12.8333C15.42 12.3731 15.0434 12 14.5832 12H2.25649C1.79626 12 1.41975 12.3731 1.41975 12.8333Z" fill="currentColor"/>
+    <path d="M5.71402 8.00001C5.71402 8.4602 6.09054 8.83334 6.55077 8.83334H14.5831C15.0433 8.83334 15.4199 8.4602 15.4199 8.00001C15.4199 7.53982 15.0433 7.16668 14.5831 7.16668H6.55077C6.09054 7.16668 5.71402 7.53982 5.71402 8.00001Z" fill="currentColor"/>
+    <path d="M1.41975 3.16667C1.41975 3.62686 1.79626 4 2.25649 4H4.44241C4.90264 4 5.27916 3.62686 5.27916 3.16667C5.27916 2.70648 4.90264 2.33334 4.44241 2.33334H2.25649C1.79626 2.33334 1.41975 2.70648 1.41975 3.16667Z" fill="currentColor"/>
+    <path d="M10.7208 12.8333C10.7208 13.2935 11.0974 13.6667 11.5576 13.6667H13.7435C14.2037 13.6667 14.5802 13.2935 14.5802 12.8333C14.5802 12.3731 14.2037 12 13.7435 12H11.5576C11.0974 12 10.7208 12.3731 10.7208 12.8333Z" fill="currentColor"/>
+  </svg>
+)
+
+/** IconEllipsisFill16 — more/three dots */
+export const more: IconDef = (s) => (
+  <svg width={s} height={s} viewBox={VB16} fill="none" xmlns={NS}>
+    <path d="M4.375 8C4.375 8.69036 3.81536 9.25 3.125 9.25C2.43464 9.25 1.875 8.69036 1.875 8C1.875 7.30964 2.43464 6.75 3.125 6.75C3.81536 6.75 4.375 7.30964 4.375 8Z" fill="currentColor"/>
+    <path d="M9.5 8C9.5 8.69036 8.94036 9.25 8.25 9.25C7.55964 9.25 7 8.69036 7 8C7 7.30964 7.55964 6.75 8.25 6.75C8.94036 6.75 9.5 7.30964 9.5 8Z" fill="currentColor"/>
+    <path d="M14.625 8C14.625 8.69036 14.0654 9.25 13.375 9.25C12.6846 9.25 12.125 8.69036 12.125 8C12.125 7.30964 12.6846 6.75 13.375 6.75C14.0654 6.75 14.625 7.30964 14.625 8Z" fill="currentColor"/>
+  </svg>
+)
+
+/** IconChevronDownOutline16 — down-pointing chevron (rotates for expand/collapse) */
+export const chevron: IconDef = (s) => (
+  <svg width={s} height={s} viewBox={VB16} fill="none" xmlns={NS}>
+    <path d="M8 11.5L2.5 6L4 4.5L8 8.5L12 4.5L13.5 6Z" fill="currentColor"/>
+  </svg>
+)
+
+/** IconPencilOutline16 — pencil/rename */
+export const pencil: IconDef = (s) => (
+  <svg width={s} height={s} viewBox={VB16} fill="none" xmlns={NS}>
+    <path d="M11.5 1.5L14.5 4.5L5 14H2L2 11L11.5 1.5Z" fill="currentColor"/>
+    <path d="M10 3L13 6L6 13H3V10L10 3Z" fill="currentColor" opacity="0.3"/>
+  </svg>
+)
+
+/** IconTrashOutline16 — trash/delete */
+export const trash: IconDef = (s) => (
+  <svg width={s} height={s} viewBox={VB16} fill="none" xmlns={NS}>
+    <path d="M6 1.5H10V2.5H13.5V4H2.5V2.5H6V1.5Z" fill="currentColor"/>
+    <path d="M3 5H13L12 14H4L3 5Z" fill="currentColor"/>
+    <path d="M5.5 6.5H6.5V12.5H5.5V6.5Z" fill="#1a2224"/>
+    <path d="M9.5 6.5H10.5V12.5H9.5V6.5Z" fill="#1a2224"/>
+  </svg>
+)
+
 /** Icon registry: maps IconName → render function (kebab-case safe) */
 export const iconMap: Record<IconName, IconDef> = {
   settings, close, plus, branch, panel,
   folder, 'folder-plus': folderPlus, model, provider, shield, runtime,
   arrow, file, work, complete, request, context, error, info, stop,
+  search, sliders, more, chevron, pencil, trash,
 }

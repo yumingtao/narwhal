@@ -20,6 +20,7 @@ const mockWorkbench: WorkbenchSnapshot = {
   conversations: [
     {
       id: 'conv-1',
+      workspaceId: 'ws-1',
       title: 'Composer controls',
       goal: 'Build model picker, permission picker, and effort selector',
       status: 'active',
@@ -33,6 +34,7 @@ const mockWorkbench: WorkbenchSnapshot = {
     },
     {
       id: 'conv-2',
+      workspaceId: 'ws-1',
       title: 'Fix release blockers',
       goal: 'Resolve P0/P1 issues before release',
       status: 'active',
@@ -42,6 +44,89 @@ const mockWorkbench: WorkbenchSnapshot = {
       ],
       createdAt: '2026-08-18T09:00:00Z',
       updatedAt: '2026-08-18T09:00:00Z',
+    },
+    {
+      id: 'conv-3',
+      workspaceId: 'ws-1',
+      title: 'Sidebar resizable implementation',
+      goal: 'Add drag-to-resize functionality for left sidebar',
+      status: 'done',
+      todos: [
+        { id: 's1', text: 'Add 5px resizer on right edge', done: true },
+        { id: 's2', text: 'Implement drag interaction logic', done: true },
+        { id: 's3', text: 'Persist width to localStorage', done: true },
+      ],
+      createdAt: '2026-08-18T10:00:00Z',
+      updatedAt: '2026-08-18T11:00:00Z',
+    },
+    {
+      id: 'conv-4',
+      workspaceId: 'ws-1',
+      title: 'Provider multi-model support',
+      goal: 'Enhance provider management to support multiple models',
+      status: 'active',
+      todos: [
+        { id: 'p1', text: 'Update createProvider API for modelIds array', done: true },
+        { id: 'p2', text: 'Add dynamic model input fields in UI', done: true },
+        { id: 'p3', text: 'Handle model deletion and fallback', done: false },
+      ],
+      createdAt: '2026-08-18T12:00:00Z',
+      updatedAt: '2026-08-19T08:00:00Z',
+    },
+    {
+      id: 'conv-5',
+      workspaceId: 'ws-1',
+      title: 'Trajectory view design',
+      goal: 'Design and implement trajectory visualization',
+      status: 'done',
+      todos: [
+        { id: 'tr1', text: 'Build timeline component', done: true },
+        { id: 'tr2', text: 'Add event table with filtering', done: true },
+        { id: 'tr3', text: 'Implement inspector panel', done: true },
+      ],
+      createdAt: '2026-08-18T14:00:00Z',
+      updatedAt: '2026-08-18T16:00:00Z',
+    },
+    {
+      id: 'conv-6',
+      workspaceId: 'ws-1',
+      title: 'Settings dialog refactor',
+      goal: 'Unified settings dialog with grouped navigation',
+      status: 'active',
+      todos: [
+        { id: 'se1', text: 'Group settings into Agent/Security/System', done: true },
+        { id: 'se2', text: 'Compact list layout for providers', done: false },
+      ],
+      createdAt: '2026-08-19T08:00:00Z',
+      updatedAt: '2026-08-19T10:00:00Z',
+    },
+    {
+      id: 'conv-7',
+      workspaceId: 'ws-1',
+      title: 'Icon system migration',
+      goal: 'Replace custom SVG icons with DSH native icons',
+      status: 'done',
+      todos: [
+        { id: 'i1', text: 'Extract icons from DSH source', done: true },
+        { id: 'i2', text: 'Create iconMap component', done: true },
+        { id: 'i3', text: 'Update all icon references', done: true },
+      ],
+      createdAt: '2026-08-19T09:00:00Z',
+      updatedAt: '2026-08-19T09:30:00Z',
+    },
+    {
+      id: 'conv-8',
+      workspaceId: 'ws-1',
+      title: 'Status bar metrics',
+      goal: 'Display DSH-style usage metrics in bottom status bar',
+      status: 'active',
+      todos: [
+        { id: 'st1', text: 'Add UsageStats interface', done: true },
+        { id: 'st2', text: 'Mock data for metrics', done: true },
+        { id: 'st3', text: 'CSS styling for metrics display', done: false },
+      ],
+      createdAt: '2026-08-19T11:00:00Z',
+      updatedAt: '2026-08-19T14:00:00Z',
     },
   ],
   selectedConversationId: 'conv-1',
@@ -196,13 +281,70 @@ const _mockBridge = Object.freeze({
   },
 
   chooseWorkspace: async () => {
-    const ws: WorkbenchSnapshot = {
-      ...currentWorkbench,
-      workspaces: [{ ...currentWorkbench.workspaces[0] }],
-      selectedWorkspaceId: currentWorkbench.workspaces[0].id,
+    // Use File System Access API to trigger native "Select Folder" dialog
+    // showDirectoryPicker() shows a system-level folder selector (not upload)
+    const anyWindow = window as unknown as { showDirectoryPicker?: () => Promise<{ name: string }> }
+    if (typeof anyWindow.showDirectoryPicker === 'function') {
+      try {
+        const dirHandle = await anyWindow.showDirectoryPicker()
+        const dirName = dirHandle.name || 'New Workspace'
+        const newWs = {
+          id: `ws-${Date.now()}`,
+          name: dirName,
+          displayPath: `/Users/dev/${dirName}`,
+          lastOpenedAt: new Date().toISOString(),
+        }
+        const ws: WorkbenchSnapshot = {
+          ...currentWorkbench,
+          workspaces: [...currentWorkbench.workspaces, newWs],
+          selectedWorkspaceId: newWs.id,
+        }
+        Object.assign(currentWorkbench, ws)
+        emitWorkbench()
+        return delay(ws)
+      } catch {
+        // User cancelled the dialog
+        return delay(currentWorkbench)
+      }
     }
-    emitWorkbench()
-    return delay(ws)
+
+    // Fallback: use webkitdirectory input for browsers without showDirectoryPicker
+    return new Promise<WorkbenchSnapshot>((resolve) => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.webkitdirectory = true
+      input.multiple = true
+      input.style.display = 'none'
+
+      input.onchange = () => {
+        const files = Array.from(input.files ?? [])
+        if (files.length === 0) {
+          resolve(delay(currentWorkbench))
+          return
+        }
+        const firstFile = files[0] as File & { webkitRelativePath: string }
+        const dirName = firstFile.webkitRelativePath.split('/')[0] || 'New Workspace'
+        const newWs = {
+          id: `ws-${Date.now()}`,
+          name: dirName,
+          displayPath: `/Users/dev/${dirName}`,
+          lastOpenedAt: new Date().toISOString(),
+        }
+        const ws: WorkbenchSnapshot = {
+          ...currentWorkbench,
+          workspaces: [...currentWorkbench.workspaces, newWs],
+          selectedWorkspaceId: newWs.id,
+        }
+        Object.assign(currentWorkbench, ws)
+        emitWorkbench()
+        resolve(delay(ws))
+      }
+
+      input.oncancel = () => { resolve(delay(currentWorkbench)) }
+      document.body.appendChild(input)
+      input.click()
+      setTimeout(() => { if (input.parentNode) input.parentNode.removeChild(input) }, 60000)
+    })
   },
 
   selectWorkspace: async (workspaceId: string) => {
@@ -211,9 +353,38 @@ const _mockBridge = Object.freeze({
     return delay(wb)
   },
 
+  renameWorkspace: async (input: { readonly workspaceId: string; readonly name: string }) => {
+    currentWorkbench = {
+      ...currentWorkbench,
+      workspaces: currentWorkbench.workspaces.map((w) =>
+        w.id === input.workspaceId ? { ...w, name: input.name } : w
+      ),
+    }
+    emitWorkbench()
+    return delay(currentWorkbench)
+  },
+
+  deleteWorkspace: async (workspaceId: string) => {
+    const remaining = currentWorkbench.workspaces.filter((w) => w.id !== workspaceId)
+    const remainingConversations = currentWorkbench.conversations.filter((c) => c.workspaceId !== workspaceId)
+    const nextSelected = currentWorkbench.selectedWorkspaceId === workspaceId
+      ? remaining[0]?.id
+      : currentWorkbench.selectedWorkspaceId
+    currentWorkbench = {
+      ...currentWorkbench,
+      workspaces: remaining,
+      conversations: remainingConversations,
+      selectedWorkspaceId: nextSelected,
+      selectedConversationId: remainingConversations[0]?.id,
+    }
+    emitWorkbench()
+    return delay(currentWorkbench)
+  },
+
   createConversation: async (input: { title: string; goal: string }) => {
     const conversation: Conversation = {
       id: `conv-${Date.now()}`,
+      workspaceId: currentWorkbench.selectedWorkspaceId ?? '',
       title: input.title,
       goal: input.goal,
       status: 'active',

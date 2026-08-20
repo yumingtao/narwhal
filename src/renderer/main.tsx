@@ -28,7 +28,24 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
 function statusText(state: AgentSnapshot['state']) { return state === 'ready' ? 'Agent ready' : state === 'starting' ? 'Starting agent' : 'Agent needs restart' }
 function formatTokens(n: number) { return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : `${n}` }
 function formatLatency(ms: number) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms` }
-function sessionTitle(item: AgentConversation['sessions'][number]) { return item.title === 'Untitled conversation' ? `Conversation · ${new Date(item.updatedAt).toLocaleDateString()}` : item.title }
+function formatRelativeTime(dateStr: string) {
+  const now = new Date()
+  const date = new Date(dateStr)
+  const diffMs = now.getTime() - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  if (diffSec < 60) return 'just now'
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m`
+  const diffHour = Math.floor(diffMin / 60)
+  if (diffHour < 24) return `${diffHour}h`
+  const diffDay = Math.floor(diffHour / 24)
+  if (diffDay < 7) return `${diffDay}d`
+  const diffWeek = Math.floor(diffDay / 7)
+  if (diffWeek < 5) return `${diffWeek}w`
+  const diffMonth = Math.floor(diffDay / 30)
+  if (diffMonth < 12) return `${diffMonth}mo`
+  return `${Math.floor(diffMonth / 12)}y`
+}
 const markdownComponents: Components = {
   code({ className, children, ...props }) {
     const language = /language-([\w-]+)/u.exec(className ?? '')?.[1]
@@ -121,8 +138,7 @@ function App() {
     <header className="titlebar"><div className="drag-space"/><div className="brand no-drag"><img src="./assets/narwhal-icon.png"/><div className="brand-name-block"><span className="brand-name">Narwhal Forge</span><span className="brand-sub">based on DeepSeek Harness</span></div></div><div className="crumb no-drag" style={{ marginLeft: `${Math.max(0, sidebarWidth - 73)}px` }}>{workspace ? <><span className="crumb-name">{workspace.name}</span><span className="crumb-path" title={workspace.displayPath}>{workspace.displayPath}</span></> : <span>Choose a workspace</span>}</div><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
     <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}`} style={layoutStyle}>
       <aside className="sidebar">
-        <button className="new-task" disabled={!workspace} onClick={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))}><Icon name="plus"/>New conversation</button>
-        <SideBar workbench={workbench} conversation={conversation} workspace={workspace} agent={agent} selectedConversation={selectedConversation} choose={() => void mutate(api.chooseWorkspace)} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={() => void agentCall(api.createSession)} selectSession={(id) => void agentCall(() => api.selectSession(id))} selectConversation={(id) => void mutate(() => api.selectConversation(id))}/>
+        <SideBar workbench={workbench} selectedConversation={selectedConversation} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createConversation={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} selectConversation={(id) => void mutate(() => api.selectConversation(id))} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
         <div className="side-foot"><button onClick={() => setSettingsOpen(true)}><Icon name="settings"/>Settings</button></div>
       </aside>
       <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>
@@ -141,7 +157,196 @@ function App() {
   </main>
 }
 
-function SideBar({ workbench, conversation, workspace, agent, selectedConversation, choose, selectWorkspace, createSession, selectSession, selectConversation }: { workbench: WorkbenchSnapshot; conversation: AgentConversation; workspace: WorkbenchSnapshot['workspaces'][number] | undefined; agent: AgentSnapshot; selectedConversation: Conversation | undefined; choose: () => void; selectWorkspace: (id: string) => void; createSession: () => void; selectSession: (id: string) => void; selectConversation: (id: string) => void }) { return <><div className="side-section"><div className="section-heading"><span>Workspaces</span><button className="workspace-add" aria-label="Open workspace" title="Open workspace" onClick={choose}><Icon name="folder-plus"/></button></div><div className="workspace-list">{workbench.workspaces.length ? workbench.workspaces.map((item) => <button key={item.id} className={item.id === workbench.selectedWorkspaceId ? 'workspace active' : 'workspace'} onClick={() => selectWorkspace(item.id)}><Icon name="folder"/><span>{item.name}</span></button>) : <p className="empty-side">Open a local folder to begin.</p>}</div></div><div className="side-section"><div className="section-heading"><span>Sessions</span><button disabled={!workspace || agent.state !== 'ready'} title="New session" onClick={createSession}><Icon name="plus"/></button></div><div className="sessions">{workspace ? conversation.sessions.length ? conversation.sessions.map((item) => <button className={item.id === conversation.selectedSessionId ? 'session active' : 'session'} key={item.id} onClick={() => selectSession(item.id)}><span>{sessionTitle(item)}</span>{item.running && <i className="session-live"/>}</button>) : <p className="empty-side">Create a session to begin.</p> : <p className="empty-side">Choose a workspace first.</p>}</div></div><div className="side-section task-list"><div className="section-heading"><span>Conversations</span><span className="count">{workbench.conversations.length}</span></div>{workbench.conversations.slice(0, 4).map((conv) => <button className={conv.id === selectedConversation?.id ? 'session active' : 'session'} key={conv.id} onClick={() => selectConversation(conv.id)}><span>{conv.title}</span><small>{conv.status === 'done' ? 'Done' : 'Active'}</small></button>)}</div></> }
+const CONVERSATIONS_PER_PAGE = 5
+type GroupBy = 'workspace' | 'flat'
+type OrderBy = 'manual' | 'lastUpdated'
+
+function SideBar({ workbench, selectedConversation, choose, selectWorkspace, createConversation, selectConversation, renameWorkspace, deleteWorkspace }: { workbench: WorkbenchSnapshot; selectedConversation: Conversation | undefined; choose: () => void; selectWorkspace: (id: string) => void; createConversation: () => void; selectConversation: (id: string) => void; renameWorkspace: (id: string, name: string) => void; deleteWorkspace: (id: string) => void }) {
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({})
+  const [filterMenuOpen, setFilterMenuOpen] = useState(false)
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [groupBy, setGroupBy] = useState<GroupBy>('workspace')
+  const [orderBy, setOrderBy] = useState<OrderBy>('lastUpdated')
+
+  const toggleWorkspace = (id: string) => {
+    setExpandedWorkspaces((prev) => ({ ...prev, [id]: !(prev[id] ?? id === workbench.selectedWorkspaceId) }))
+    setVisibleCounts((prev) => ({ ...prev, [id]: prev[id] ?? CONVERSATIONS_PER_PAGE }))
+  }
+  const isExpanded = (id: string) => expandedWorkspaces[id] ?? id === workbench.selectedWorkspaceId
+  const getVisibleCount = (id: string) => visibleCounts[id] ?? CONVERSATIONS_PER_PAGE
+  const loadMore = (id: string) => {
+    setVisibleCounts((prev) => ({ ...prev, [id]: Math.min((prev[id] ?? CONVERSATIONS_PER_PAGE) + CONVERSATIONS_PER_PAGE, workbench.conversations.filter((c) => c.workspaceId === id).length) }))
+  }
+  const sortConversations = (convs: Conversation[]) => {
+    if (orderBy === 'lastUpdated') return [...convs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    return convs
+  }
+
+  // Filter menu popup
+  const FilterMenu = () => filterMenuOpen ? (
+    <>
+      <div className="menu-overlay" onClick={() => { setFilterMenuOpen(false) }}/>
+      <div className="menu-popup" onClick={(e) => e.stopPropagation()}>
+        <div className="menu-section">
+          <div className="menu-section-title">Group by</div>
+          <button className={`menu-item${groupBy === 'workspace' ? ' active' : ''}`} onClick={() => { setGroupBy('workspace'); setFilterMenuOpen(false) }}>
+            WorkSpace {groupBy === 'workspace' && <span className="menu-check">✓</span>}
+          </button>
+          <button className={`menu-item${groupBy === 'flat' ? ' active' : ''}`} onClick={() => { setGroupBy('flat'); setFilterMenuOpen(false) }}>
+            In one list {groupBy === 'flat' && <span className="menu-check">✓</span>}
+          </button>
+        </div>
+        <div className="menu-divider"/>
+        <div className="menu-section">
+          <div className="menu-section-title">Order by</div>
+          <button className={`menu-item${orderBy === 'manual' ? ' active' : ''}`} onClick={() => { setOrderBy('manual'); setFilterMenuOpen(false) }}>
+            Manual {orderBy === 'manual' && <span className="menu-check">✓</span>}
+          </button>
+          <button className={`menu-item${orderBy === 'lastUpdated' ? ' active' : ''}`} onClick={() => { setOrderBy('lastUpdated'); setFilterMenuOpen(false) }}>
+            Last updated {orderBy === 'lastUpdated' && <span className="menu-check">✓</span>}
+          </button>
+        </div>
+      </div>
+    </>
+  ) : null
+
+  return <>
+    {/* Workspaces/Sessions section */}
+    <div className="side-section">
+      <div className="section-heading filter-heading">
+        <span>{groupBy === 'flat' ? 'Sessions' : 'Workspaces'}</span>
+        <div className="section-heading-actions">
+          <button className="heading-icon" aria-label="Search" title="Search"><Icon name="search"/></button>
+          <button className={`heading-icon${filterMenuOpen ? ' active' : ''}`} aria-label="Filter" title="Filter / Sort" onClick={() => setFilterMenuOpen(!filterMenuOpen)}><Icon name="sliders"/></button>
+          <button className="heading-icon" aria-label="New workspace" title="New workspace" onClick={choose}><Icon name="folder-plus"/></button>
+        </div>
+        <FilterMenu/>
+      </div>
+      <div className="workspace-list">
+        {workbench.workspaces.length ? (
+          groupBy === 'workspace' ? workbench.workspaces.map((item) => {
+            const allConvs = sortConversations(workbench.conversations.filter((c) => c.workspaceId === item.id))
+            const expanded = isExpanded(item.id)
+            const visibleCount = getVisibleCount(item.id)
+            const visibleConvs = allConvs.slice(0, visibleCount)
+            const hasMore = visibleCount < allConvs.length
+            const isMenuOpen = workspaceMenuOpen === item.id
+            const isRenaming = renamingId === item.id
+            return (
+              <div key={item.id} className="workspace-group">
+                <div
+                  className={item.id === workbench.selectedWorkspaceId ? 'workspace-row active' : 'workspace-row'}
+                  onClick={() => { if (!isRenaming) { toggleWorkspace(item.id); selectWorkspace(item.id) } }}
+                >
+                  <span className={`workspace-chevron${expanded ? ' expanded' : ''}`} onClick={(e) => { e.stopPropagation(); toggleWorkspace(item.id) }}>
+                    <Icon name="chevron" size={12}/>
+                  </span>
+                  <Icon name="folder" size={14}/>
+                  {isRenaming ? (
+                    <input
+                      className="workspace-rename-input"
+                      autoFocus
+                      value={renameValue}
+                      onChange={(e) => setRenameValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); if (renameValue.trim()) { renameWorkspace(item.id, renameValue.trim()); setRenamingId(null); setRenameValue('') } }
+                        if (e.key === 'Escape') { setRenamingId(null); setRenameValue('') }
+                      }}
+                      onBlur={() => { if (renameValue.trim()) { renameWorkspace(item.id, renameValue.trim()) } setRenamingId(null); setRenameValue('') }}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  ) : (
+                    <span className="workspace-name">{item.name}</span>
+                  )}
+                  <div className="workspace-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className={`heading-icon workspace-action-btn${isMenuOpen ? ' active' : ''}`}
+                      aria-label="Workspace options"
+                      title="Workspace options"
+                      onClick={() => setWorkspaceMenuOpen(isMenuOpen ? null : item.id)}
+                    >
+                      <Icon name="more" size={14}/>
+                    </button>
+                    <button
+                      className="heading-icon workspace-action-btn"
+                      aria-label="New session"
+                      title="New session"
+                      onClick={() => { selectWorkspace(item.id); createConversation() }}
+                    >
+                      <Icon name="plus" size={14}/>
+                    </button>
+                  </div>
+                  {isMenuOpen && (
+                    <>
+                      <div className="menu-overlay" onClick={() => setWorkspaceMenuOpen(null)}/>
+                      <div className="menu-popup workspace-menu" onClick={(e) => e.stopPropagation()}>
+                        <div className="menu-section">
+                          <button className="menu-item" onClick={() => { setWorkspaceMenuOpen(null); setRenamingId(item.id); setRenameValue(item.name) }}>
+                            <Icon name="pencil" size={14}/> Rename
+                          </button>
+                          <button className="menu-item danger" onClick={() => { setWorkspaceMenuOpen(null); if (window.confirm(`Delete workspace "${item.name}"? This also removes all its sessions.`)) { deleteWorkspace(item.id) } }}>
+                            <Icon name="trash" size={14}/> Delete workspace
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+                {expanded && (
+                  <div className="workspace-conversations">
+                    {allConvs.length ? visibleConvs.map((conv) => (
+                      <button
+                        key={conv.id}
+                        className={conv.id === selectedConversation?.id ? 'session active' : 'session'}
+                        onClick={() => selectConversation(conv.id)}
+                      >
+                        <span className="session-title">{conv.title}</span>
+                        <small>{formatRelativeTime(conv.updatedAt)}</small>
+                      </button>
+                    )) : <p className="empty-side">No sessions yet.</p>}
+                    {hasMore && (
+                      <button className="load-more" onClick={(e) => { e.stopPropagation(); loadMore(item.id) }}>
+                        Load more ({allConvs.length - visibleCount})
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          }) : (
+            // Flat list view - matching DSH native
+            <>
+              <div className="side-section top-section">
+                <button className="btn-new-session" onClick={() => {
+                  createConversation()
+                }}>
+                  <Icon name="plus" size={16}/>
+                  <span>New Session</span>
+                </button>
+              </div>
+              {sortConversations([...workbench.conversations]).slice(0, CONVERSATIONS_PER_PAGE).map((conv) => (
+                <button
+                  key={conv.id}
+                  className={conv.id === selectedConversation?.id ? 'session active' : 'session'}
+                  onClick={() => selectConversation(conv.id)}
+                >
+                  <span className="session-title">{conv.title}</span>
+                  <small>{formatRelativeTime(conv.updatedAt)}</small>
+                </button>
+              ))}
+              {workbench.conversations.length > CONVERSATIONS_PER_PAGE && (
+                <button className="load-more">Load more</button>
+              )}
+            </>
+          )
+        ) : <p className="empty-side">Open a local folder to begin.</p>}
+      </div>
+    </div>
+  </>
+}
 function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string) => void; cancel: () => void }) {
   const trajectoryData = useMemo(() => buildTrajectoryData(conversation.trajectory), [conversation.trajectory])
   const [duration, setDuration] = useState(true)

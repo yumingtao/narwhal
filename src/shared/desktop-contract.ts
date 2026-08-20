@@ -1,7 +1,7 @@
 export type AgentState = 'ready' | 'starting' | 'needs-restart'
 export type ConversationStatus = 'active' | 'done'
 export interface TodoItem { readonly id: string; readonly text: string; readonly done: boolean }
-export interface Conversation { readonly id: string; readonly title: string; readonly goal: string; readonly status: ConversationStatus; readonly todos: readonly TodoItem[]; readonly createdAt: string; readonly updatedAt: string }
+export interface Conversation { readonly id: string; readonly workspaceId: string; readonly title: string; readonly goal: string; readonly status: ConversationStatus; readonly todos: readonly TodoItem[]; readonly createdAt: string; readonly updatedAt: string }
 export interface Deliverable { readonly relativePath: string; readonly label: string; readonly pinnedAt: string }
 export interface Workspace { readonly id: string; readonly name: string; readonly displayPath: string; readonly lastOpenedAt: string }
 export interface GitChange { readonly path: string; readonly kind: string }
@@ -23,6 +23,8 @@ export interface NarwhalBridge {
   bootstrap(): Promise<{ readonly agent: AgentSnapshot; readonly workbench: WorkbenchSnapshot; readonly settings: DesktopSettings }>
   chooseWorkspace(): Promise<WorkbenchSnapshot>
   selectWorkspace(workspaceId: string): Promise<WorkbenchSnapshot>
+  renameWorkspace(input: { readonly workspaceId: string; readonly name: string }): Promise<WorkbenchSnapshot>
+  deleteWorkspace(workspaceId: string): Promise<WorkbenchSnapshot>
   createConversation(input: { readonly title: string; readonly goal: string }): Promise<WorkbenchSnapshot>
   updateConversation(input: { readonly conversationId: string; readonly title?: string; readonly goal?: string; readonly status?: ConversationStatus }): Promise<WorkbenchSnapshot>
   addTodo(input: { readonly conversationId: string; readonly text: string }): Promise<WorkbenchSnapshot>
