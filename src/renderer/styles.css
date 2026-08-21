@@ -6,9 +6,14 @@ button { cursor: pointer; }
 .app-shell { position: relative; height: 100vh; background: #121416; }
 .titlebar { height: 44px; display: flex; align-items: center; gap: 0; background: #181c1e; border-bottom: 1px solid #2c3436; -webkit-app-region: drag; position: relative; }
 .drag-space { width: 78px; height: 100%; flex: 0 0 78px; }
+.traffic-lights { display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 12px; }
+.traffic-lights span { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.traffic-lights .tl-close { background: #ff5f57; border: 0.5px solid #e0443e; }
+.traffic-lights .tl-minimize { background: #febc2e; border: 0.5px solid #dea123; }
+.traffic-lights .tl-maximize { background: #28c840; border: 0.5px solid #1aab29; }
 .no-drag { -webkit-app-region: no-drag; }
 .brand { position: absolute; left: 78px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 680; white-space: nowrap; letter-spacing: -.2px; z-index: 2; }
-.brand img { width: 25px; height: 25px; object-fit: contain; align-self: center; }
+.brand img { width: 32px; height: 32px; object-fit: contain; align-self: center; }
 .brand-name-block { display: flex; flex-direction: column; line-height: 1.1; }
 .brand-name { font-size: 15px; font-weight: 680; }
 .brand-sub { font-size: 10.5px; font-weight: 400; color: #77827f; letter-spacing: 0; line-height: 1; margin-top: 2px; }
