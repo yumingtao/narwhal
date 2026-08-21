@@ -46,6 +46,27 @@ function formatRelativeTime(dateStr: string) {
   if (diffMonth < 12) return `${diffMonth}mo`
   return `${Math.floor(diffMonth / 12)}y`
 }
+
+// Agent mode definitions (UI-level, matching DSH native modes)
+type AgentMode = 'standard' | 'ptc' | 'minimal' | 'creator'
+const AGENT_MODES: Record<AgentMode, { name: string; description: string }> = {
+  standard: {
+    name: 'Standard mode',
+    description: 'Full coding agent with file editing, shell, file and web search, skills, planning, goals, subagents, and workflows.',
+  },
+  ptc: {
+    name: 'PTC mode',
+    description: 'All Standard mode capabilities, with tools exposed through the Code Mode SDK so the model can combine multi-step operations in one TypeScript program.',
+  },
+  minimal: {
+    name: 'Minimal mode',
+    description: 'Two-tool coding agent with persistent bash and str_replace_editor.',
+  },
+  creator: {
+    name: 'Creator mode',
+    description: 'Built for creating custom agent presets, with all Standard mode capabilities plus runtime inspection, plugin experiments, and preset-authoring guidance.',
+  },
+}
 const markdownComponents: Components = {
   code({ className, children, ...props }) {
     const language = /language-([\w-]+)/u.exec(className ?? '')?.[1]
@@ -75,6 +96,10 @@ function App() {
   const [deliverableDraft, setDeliverableDraft] = useState(false)
   const [trajectoryOpen, setTrajectoryOpen] = useState(false)
   const [error, setError] = useState('')
+  const [mode, setMode] = useState<AgentMode>(() => {
+    const stored = localStorage.getItem('narwhal:agent-mode') as AgentMode | null
+    return stored && stored in AGENT_MODES ? stored : 'standard'
+  })
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY)
     return stored ? Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, parseInt(stored, 10))) : DEFAULT_SIDEBAR_WIDTH
@@ -97,6 +122,7 @@ function App() {
   const selectModel = async (input: { provider: string; model: string; reasoningEffort?: string }) => { try { setConfiguration(await api.selectAgentModel(input)) } catch { setError('The selected model could not be applied. Nothing was changed.') } }
   const selectPermission = async (preset: string) => { if (preset.toLowerCase().includes('full') && !window.confirm('Full access can allow unrestricted local tool operations. Continue?')) return; try { setConfiguration(await api.setDefaultPermission(preset)) } catch { setError('The selected permission could not be applied. Nothing was changed.') } }
   useEffect(() => { if (workspace && agent.state === 'ready') void agentCall(api.listSessions) }, [workspace?.id, agent.state])
+  useEffect(() => { localStorage.setItem('narwhal:agent-mode', mode) }, [mode])
   useEffect(() => { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)) }, [sidebarWidth])
   useEffect(() => { localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)) }, [panelWidth])
   const layoutStyle = workbench.panelOpen
@@ -135,7 +161,7 @@ function App() {
   }
   const onPanelDoubleClick = () => { setPanelWidth(DEFAULT_PANEL_WIDTH) }
   return <main className="app-shell">
-    <header className="titlebar"><div className="drag-space"/><div className="brand no-drag"><img src="./assets/narwhal-icon.png"/><div className="brand-name-block"><span className="brand-name">Narwhal Forge</span><span className="brand-sub">based on DeepSeek Harness</span></div></div><div className="crumb no-drag" style={{ marginLeft: `${Math.max(0, sidebarWidth - 73)}px` }}>{workspace ? <><span className="crumb-name">{workspace.name}</span><span className="crumb-path" title={workspace.displayPath}>{workspace.displayPath}</span></> : <span>Choose a workspace</span>}</div><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
+    <header className="titlebar"><div className="drag-space"/><div className="brand no-drag"><img src="./assets/narwhal-icon.png"/><div className="brand-name-block"><span className="brand-name">Narwhal Forge</span><span className="brand-sub">based on DeepSeek Harness</span></div></div><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
     <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}`} style={layoutStyle}>
       <aside className="sidebar">
         <SideBar workbench={workbench} selectedConversation={selectedConversation} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createConversation={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} selectConversation={(id) => void mutate(() => api.selectConversation(id))} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
@@ -144,7 +170,7 @@ function App() {
       <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
-        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))}/>} 
+        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''}/>} 
         <footer className="statusbar">{conversation.usage ? <span className="usage-metrics"><strong>{conversation.usage.turns}</strong> turns<em/>{conversation.usage.steps} steps<em/>LLM <strong>{formatLatency(conversation.usage.llmLatency)}</strong><em/>TTFT avg <strong>{formatLatency(conversation.usage.ttftAvg)}</strong><em/><strong>{conversation.usage.tokenThroughput}</strong> tok/s<em/>Cache hit <strong>{conversation.usage.cacheHitRate}%</strong><em/>Input <strong>{formatTokens(conversation.usage.inputTokens)} tok</strong><em/>Output <strong>{conversation.usage.outputTokens} tok</strong></span> : null}<span className="statusbar-right"><span><Icon name="branch"/>{workbench.git.branch ?? 'No Git repository'}</span></span></footer>
       </section>
       {workbench.panelOpen && <div className="panel-resizer" onMouseDown={onPanelResizeStart} onDoubleClick={onPanelDoubleClick} title="Drag to resize · Double-click to reset"/>} 
@@ -347,11 +373,14 @@ function SideBar({ workbench, selectedConversation, choose, selectWorkspace, cre
     </div>
   </>
 }
-function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string) => void; cancel: () => void }) {
+function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel, workbench, selectWorkspace, chooseWorkspace, mode, setMode, conversationTitle, subagentsCount = 0 }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string) => void; cancel: () => void; workbench: WorkbenchSnapshot; selectWorkspace: (id: string) => void; chooseWorkspace: () => void; mode: AgentMode; setMode: (mode: AgentMode) => void; conversationTitle: string; subagentsCount?: number }) {
   const trajectoryData = useMemo(() => buildTrajectoryData(conversation.trajectory), [conversation.trajectory])
   const [duration, setDuration] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedRecord, setSelectedRecord] = useState<number | null>(null)
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false)
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+  const [subagentsMenuOpen, setSubagentsMenuOpen] = useState(false)
   const selectedRecordData = useMemo(() => {
     if (selectedRecord === null) return null
     for (const turn of trajectoryData.turns) {
@@ -373,9 +402,11 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
   }
   const turnCount = trajectoryData.turns.length
   const callCount = trajectoryData.kindCounts.tool + trajectoryData.kindCounts.subtool
-  const chatContent = conversation.messages.length
+  const currentWorkspace = workbench.workspaces.find((w) => w.id === workbench.selectedWorkspaceId)
+  const hasMessages = conversation.messages.length > 0
+  const chatContent = hasMessages
     ? conversation.messages.map((item) => <TimelineItem key={item.id} item={item} trajectory={false}/>)
-    : <div className="conversation-empty"><img src="./assets/narwhal-icon.png"/><h2>Start with a clear task.</h2><p>Ask the local Agent to explore, build, fix or explain something in this workspace.</p></div>
+    : null
   const trajectoryContent = (
     <div className="trajectory-view-root">
       <TrajectoryToolbar duration={duration} onDurationChange={setDuration} searchQuery={searchQuery} onSearchQueryChange={setSearchQuery} turnCount={turnCount} callCount={callCount}/>
@@ -390,19 +421,160 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
       {selectedRecordData && <TrajectoryInspector record={selectedRecordData} onClose={() => setSelectedRecord(null)}/>}
     </div>
   )
+  const isEmptyChat = !trajectoryOpen && !hasMessages
   return (
-    <div className="native-conversation">
+    <div className={`native-conversation${isEmptyChat ? ' empty-chat' : ''}`}>
       <div className="conversation-head">
-        <div><p>Local Agent</p><h1>{trajectoryOpen ? 'Trajectory' : 'Chat'}</h1></div>
+        <div className="conversation-head-left">
+          {conversationTitle && <span className="conversation-title">{conversationTitle}</span>}
+          <div className="conversation-selectors">
+            {/* Workspace selector pill */}
+            <div className="selector-pill-wrapper">
+              <button
+                className="selector-pill"
+                onClick={() => { setWorkspaceMenuOpen(!workspaceMenuOpen); setModeMenuOpen(false); setSubagentsMenuOpen(false) }}
+                title={currentWorkspace?.displayPath ?? 'Select workspace'}
+              >
+                <Icon name="folder" size={14}/>
+                <span className="selector-pill-label">{currentWorkspace?.name ?? 'No workspace'}</span>
+                <Icon name="chevron" size={10}/>
+              </button>
+              {workspaceMenuOpen && (
+                <>
+                  <div className="menu-overlay" onClick={() => setWorkspaceMenuOpen(false)}/>
+                  <div className="menu-popup selector-menu" onClick={(e) => e.stopPropagation()}>
+                    <div className="menu-section">
+                      {workbench.workspaces.map((ws) => (
+                        <button
+                          key={ws.id}
+                          className={`menu-item ${ws.id === workbench.selectedWorkspaceId ? 'active' : ''}`}
+                          onClick={() => { selectWorkspace(ws.id); setWorkspaceMenuOpen(false) }}
+                        >
+                          <span className="selector-item-icon"><Icon name="folder" size={14}/></span>
+                          <span className="selector-item-label">{ws.name}</span>
+                          {ws.id === workbench.selectedWorkspaceId && <span className="menu-check">✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="menu-divider"/>
+                    <div className="menu-section">
+                      <button className="menu-item" onClick={() => { setWorkspaceMenuOpen(false); chooseWorkspace() }}>
+                        <span className="selector-item-icon"><Icon name="plus" size={14}/></span>
+                        <span className="selector-item-label">Add workspace…</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            {/* Mode selector pill */}
+            <div className="selector-pill-wrapper">
+              <button
+                className="selector-pill"
+                onClick={() => { setModeMenuOpen(!modeMenuOpen); setWorkspaceMenuOpen(false); setSubagentsMenuOpen(false) }}
+              >
+                <Icon name="robot" size={14}/>
+                <span className="selector-pill-label">{AGENT_MODES[mode].name}</span>
+                <Icon name="chevron" size={10}/>
+              </button>
+              {modeMenuOpen && (
+                <>
+                  <div className="menu-overlay" onClick={() => setModeMenuOpen(false)}/>
+                  <div className="menu-popup selector-menu mode-menu" onClick={(e) => e.stopPropagation()}>
+                    <div className="menu-section">
+                      {(Object.entries(AGENT_MODES) as [AgentMode, { name: string; description: string }][]).map(([key, value]) => (
+                        <button
+                          key={key}
+                          className={`menu-item mode-item ${mode === key ? 'active' : ''}`}
+                          onClick={() => { setMode(key); setModeMenuOpen(false) }}
+                        >
+                          <div className="mode-item-content">
+                            <span className="mode-item-name">{value.name}</span>
+                            <span className="mode-item-desc">{value.description}</span>
+                          </div>
+                          {mode === key && <span className="menu-check">✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            {/* Subagents pill */}
+            <div className="selector-pill-wrapper">
+              <button
+                className="selector-pill"
+                onClick={() => { setSubagentsMenuOpen(!subagentsMenuOpen); setWorkspaceMenuOpen(false); setModeMenuOpen(false) }}
+                title="Manage subagents"
+              >
+                <Icon name="robot" size={14}/>
+                <span className="selector-pill-label">{subagentsCount} subagent{subagentsCount !== 1 ? 's' : ''}</span>
+                <Icon name="chevron" size={10}/>
+              </button>
+              {subagentsMenuOpen && (
+                <>
+                  <div className="menu-overlay" onClick={() => setSubagentsMenuOpen(false)}/>
+                  <div className="menu-popup selector-menu" onClick={(e) => e.stopPropagation()}>
+                    <div className="menu-section">
+                      <div className="subagents-empty">
+                        <span className="subagents-count">{subagentsCount}</span>
+                        <span>active subagent{subagentsCount !== 1 ? 's' : ''}</span>
+                      </div>
+                    </div>
+                    <div className="menu-divider"/>
+                    <div className="menu-section">
+                      <button className="menu-item" onClick={() => setSubagentsMenuOpen(false)}>
+                        <span className="selector-item-icon"><Icon name="plus" size={14}/></span>
+                        <span className="selector-item-label">Create subagent…</span>
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
         <div className="segmented">
           <button className={!trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(false)}>Chat</button>
           <button className={trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(true)}>Trajectory</button>
         </div>
       </div>
-      <div className={`timeline ${trajectoryOpen ? 'trajectory-view' : ''}`} ref={timeline} onScroll={trackScroll}>
-        {trajectoryOpen ? trajectoryContent : chatContent}
-      </div>
-      {!trajectoryOpen && <Composer running={conversation.running} configuration={configuration} hasSession={!!conversation.selectedSessionId} selectModel={selectModel} selectPermission={selectPermission} send={send} cancel={cancel}/>}
+      {trajectoryOpen ? (
+        <div className="timeline trajectory-view" ref={timeline} onScroll={trackScroll}>
+          {trajectoryContent}
+        </div>
+      ) : isEmptyChat ? (
+        <div className="empty-chat-container">
+          <div className="empty-chat-header">
+            <img src="./assets/narwhal-icon.png" alt="Narwhal" className="empty-chat-icon"/>
+          </div>
+          <Composer
+            running={conversation.running}
+            configuration={configuration}
+            hasSession={!!conversation.selectedSessionId}
+            selectModel={selectModel}
+            selectPermission={selectPermission}
+            send={send}
+            cancel={cancel}
+            centered
+          />
+        </div>
+      ) : (
+        <>
+          <div className="timeline" ref={timeline} onScroll={trackScroll}>
+            {chatContent}
+          </div>
+          <Composer
+            running={conversation.running}
+            configuration={configuration}
+            hasSession={!!conversation.selectedSessionId}
+            selectModel={selectModel}
+            selectPermission={selectPermission}
+            send={send}
+            cancel={cancel}
+          />
+        </>
+      )}
     </div>
   )
 }
@@ -422,10 +594,184 @@ function normalizeTrajectory(item: ChatItem) {
 }
 function trajectoryPhases(_items: readonly ChatItem[]) { return [] }
 function TimelineItem({ item, trajectory }: { item: ChatItem; trajectory: boolean }) { if (trajectory || item.kind === 'trajectory' || item.kind === 'error') { const event = normalizeTrajectory(item); return <article className={`trajectory-row ${event.type}`}><span className="trajectory-mark"><Icon name={event.type}/></span><div><strong>{event.label}</strong><p>{event.text}</p></div></article> } return <article className={`message ${item.kind}`}><p className="message-label">{item.kind === 'user' ? 'You' : 'Narwhal Agent'}{item.streaming && <span className="streaming">Writing</span>}</p><div className="message-body"><MarkdownMessage content={item.text}/></div></article> }
-function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string) => void; cancel: () => void }) { const [text, setText] = useState(''); const input = useRef<HTMLTextAreaElement>(null); useEffect(() => { if (running) { setText(''); input.current?.blur() } }, [running]); const submit = (event: FormEvent) => { event.preventDefault(); const message = text.trim(); if (!message || running) return; setText(''); send(message) }; const permissionValue = configuration.permissionOptions.some((option) => option.id === configuration.defaultPermission) ? configuration.defaultPermission ?? '' : configuration.permissionOptions[0]?.id ?? ''; const modelPickerDisabled = !hasSession || running || !configuration.available; return <form className="composer" onSubmit={submit}><div className="composer-input-row"><textarea ref={input} value={text} onChange={(event) => setText(event.target.value)} placeholder={running ? 'The Agent is working…' : hasSession ? 'Message the local Agent' : 'Select or create a conversation first'} disabled={running} rows={2} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }}/>{running ? <button type="button" className="cancel-turn" onClick={cancel}>Stop</button> : <button className="send" disabled={!text.trim() || !hasSession} aria-label="Send message"><Icon name="arrow"/></button>}</div><div className="composer-controls"><ModelPicker configuration={configuration} disabled={modelPickerDisabled} running={running} selectModel={selectModel}/>{configuration.available && configuration.permissionOptions.length ? <label className="composer-permission"><select aria-label="Permission" title="Set default conversation permission" value={permissionValue} disabled={running} onChange={(event) => void selectPermission(event.target.value)}>{configuration.permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label> : configuration.available ? <span className="composer-permission-empty">Permission presets unavailable</span> : <span className="composer-permission-empty">Agent not connected</span>}</div></form> }
-function modelSelectionValue(provider: string, model: string) { return JSON.stringify([provider, model]) }
-function parseModelSelection(value: string): { provider: string; model: string } | undefined { try { const parsed: unknown = JSON.parse(value); return Array.isArray(parsed) && typeof parsed[0] === 'string' && typeof parsed[1] === 'string' ? { provider: parsed[0], model: parsed[1] } : undefined } catch { return undefined } }
-function ModelPicker({ configuration, disabled, running, selectModel }: { configuration: AgentConfiguration; disabled: boolean; running: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void> }) { const groups = configuration.models; const selected = configuration.selectedModel; const provider = groups.find((item) => item.id === selected?.provider) ?? groups.find((item) => item.models.length > 0); const model = provider?.models.find((item) => item.id === selected?.model) ?? provider?.models[0]; if (!configuration.available || !provider || !model) return <span className="composer-model-empty">Model unavailable</span>; const value = modelSelectionValue(provider.id, model.id); const effort = model.efforts.some((item) => item.id === selected?.reasoningEffort) ? selected?.reasoningEffort ?? '' : model.defaultEffort ?? model.efforts[0]?.id ?? ''; const handleModelChange = (event: React.ChangeEvent<HTMLSelectElement>) => { const next = parseModelSelection(event.target.value); if (!next) return; const nextProvider = groups.find((item) => item.id === next.provider); const nextModel = nextProvider?.models.find((item) => item.id === next.model); if (nextProvider && nextModel) void selectModel({ provider: nextProvider.id, model: nextModel.id, ...(nextModel.defaultEffort && { reasoningEffort: nextModel.defaultEffort }) }) }; const handleEffortChange = (event: React.ChangeEvent<HTMLSelectElement>) => { void selectModel({ provider: provider.id, model: model.id, reasoningEffort: event.target.value || undefined }) }; return <><label className="composer-model-picker"><select aria-label="Provider and model" title="Switch provider and model" value={value} disabled={disabled || running} onChange={handleModelChange}>{groups.map((group) => <optgroup key={group.id} label={group.name}>{group.models.map((item) => <option key={item.id} value={modelSelectionValue(group.id, item.id)}>{item.name}</option>)}</optgroup>)}</select></label>{model.efforts.length ? <label className="composer-effort-picker"><select aria-label="Reasoning effort" title="Switch reasoning effort" value={effort} disabled={disabled || running} onChange={handleEffortChange}>{model.efforts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}</> }
+function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel, centered }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string) => void; cancel: () => void; centered?: boolean }) {
+  const [text, setText] = useState('')
+  const [permMenuOpen, setPermMenuOpen] = useState(false)
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const input = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (running) { setText(''); input.current?.blur() }
+  }, [running])
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const message = text.trim()
+    if (!message || running) return
+    setText('')
+    send(message)
+  }
+
+  const permissionValue = configuration.permissionOptions.some((option) => option.id === configuration.defaultPermission)
+    ? configuration.defaultPermission ?? ''
+    : configuration.permissionOptions[0]?.id ?? ''
+  const currentPermission = configuration.permissionOptions.find((o) => o.id === permissionValue)
+  const modelPickerDisabled = !hasSession || running || !configuration.available
+
+  // Get current model info
+  const groups = configuration.models
+  const selected = configuration.selectedModel
+  const provider = groups.find((item) => item.id === selected?.provider) ?? groups.find((item) => item.models.length > 0)
+  const model = provider?.models.find((item) => item.id === selected?.model) ?? provider?.models[0]
+  const effort = model?.efforts.some((item) => item.id === selected?.reasoningEffort)
+    ? selected?.reasoningEffort ?? ''
+    : model?.defaultEffort ?? model?.efforts[0]?.id ?? ''
+  const currentEffort = model?.efforts.find((e) => e.id === effort)
+
+  const handleModelSelect = (providerId: string, modelId: string, modelEffort?: string) => {
+    void selectModel({ provider: providerId, model: modelId, ...(modelEffort && { reasoningEffort: modelEffort }) })
+    setModelMenuOpen(false)
+  }
+  
+
+  const composerClass = `composer${centered ? ' composer-centered' : ''}`
+
+  return (
+    <form className={composerClass} onSubmit={submit}>
+      <textarea
+        ref={input}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        placeholder={running ? 'The Agent is working…' : hasSession ? 'Describe what you want to build' : 'Select or create a conversation first'}
+        disabled={running}
+        rows={centered ? 4 : 2}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault()
+            event.currentTarget.form?.requestSubmit()
+          }
+        }}
+      />
+      <div className="composer-bottom-bar">
+        <div className="composer-bar-left">
+          <button type="button" className="composer-add-btn" title="Add attachment" aria-label="Add attachment" disabled={running}>
+            <Icon name="plus" size={16}/>
+          </button>
+          {/* Permission selector pill */}
+          <div className="selector-pill-wrapper">
+            <button
+              type="button"
+              className="selector-pill composer-permission-pill"
+              disabled={!configuration.available || running || !configuration.permissionOptions.length}
+              onClick={() => { setPermMenuOpen(!permMenuOpen); setModelMenuOpen(false) }}
+              title="Set default conversation permission"
+            >
+              <Icon name="shield" size={13}/>
+              <span className="selector-pill-label">{currentPermission?.label ?? 'Permission'}</span>
+              <Icon name="chevron" size={10}/>
+            </button>
+            {permMenuOpen && configuration.available && configuration.permissionOptions.length > 0 && (
+              <>
+                <div className="menu-overlay" onClick={() => setPermMenuOpen(false)}/>
+                <div className="menu-popup selector-menu" onClick={(e) => e.stopPropagation()}>
+                  <div className="menu-section">
+                    {configuration.permissionOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        className={`menu-item ${option.id === permissionValue ? 'active' : ''}`}
+                        onClick={() => { void selectPermission(option.id); setPermMenuOpen(false) }}
+                      >
+                        <span className="selector-item-label">{option.label}</span>
+                        {option.id === permissionValue && <span className="menu-check">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+          {/* Model selector pill */}
+          {configuration.available && provider && model ? (
+            <div className="selector-pill-wrapper">
+              <button
+                type="button"
+                className="selector-pill composer-model-pill"
+                disabled={modelPickerDisabled}
+                onClick={() => { setModelMenuOpen(!modelMenuOpen); setPermMenuOpen(false) }}
+                title="Switch provider and model"
+              >
+                <span className="selector-pill-label">
+                  {model.name}
+                  {currentEffort && <span className="composer-effort-label"> · {currentEffort.name}</span>}
+                </span>
+                <Icon name="chevron" size={10}/>
+              </button>
+              {modelMenuOpen && (
+                <>
+                  <div className="menu-overlay" onClick={() => setModelMenuOpen(false)}/>
+                  <div className="menu-popup selector-menu model-selector-menu" onClick={(e) => e.stopPropagation()}>
+                    <div className="menu-section">
+                      {groups.map((group) => (
+                        <div key={group.id} className="model-provider-group">
+                          <div className="model-provider-title">{group.name}</div>
+                          {group.models.map((m) => {
+                            const isActive = group.id === provider?.id && m.id === model?.id
+                            const defaultEffort = m.defaultEffort ?? m.efforts[0]?.id
+                            return (
+                              <div key={`${group.id}-${m.id}`}>
+                                <button
+                                  className={`menu-item model-menu-item ${isActive ? 'active' : ''}`}
+                                  onClick={() => handleModelSelect(group.id, m.id, defaultEffort)}
+                                >
+                                  <span className="selector-item-label">{m.name}</span>
+                                  {isActive && <span className="menu-check">✓</span>}
+                                </button>
+                                {isActive && m.efforts.length > 1 && (
+                                  <div className="effort-submenu">
+                                    {m.efforts.map((eff) => (
+                                      <button
+                                        key={eff.id}
+                                        className={`menu-item effort-menu-item ${eff.id === currentEffort?.id ? 'active' : ''}`}
+                                        onClick={() => handleModelSelect(group.id, m.id, eff.id)}
+                                      >
+                                        <span className="selector-item-label">{eff.name}</span>
+                                        {eff.id === currentEffort?.id && <span className="menu-check">✓</span>}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : configuration.available ? (
+            <span className="composer-model-empty">Model unavailable</span>
+          ) : null}
+        </div>
+        <div className="composer-bar-right">
+          {running ? (
+            <button type="button" className="cancel-turn" onClick={cancel}>Stop</button>
+          ) : (
+            <button
+              type="submit"
+              className="send"
+              disabled={!text.trim() || !hasSession}
+              aria-label="Send message"
+            >
+              <Icon name="arrow"/>
+            </button>
+          )}
+        </div>
+      </div>
+    </form>
+  )
+}
 function EmptyWorkspace({ open }: { open: () => void }) { return <div className="empty-state"><img src="./assets/narwhal-icon.png"/><p className="eyebrow">Your local forge</p><h1>Give your agent a place to work.</h1><p>Open a project folder. Narwhal Forge keeps conversations and deliverables on this Mac, separate from your code.</p><button className="primary" onClick={open}><Icon name="folder-plus"/>Open workspace</button></div> }
 function EmptyConversation({ create }: { create: () => void }) { return <div className="empty-state"><img src="./assets/narwhal-icon.png"/><p className="eyebrow">Ready when you are</p><h1>Start a local conversation.</h1><p>Narwhal Forge will create an Agent session for this workspace. Your work context stays in this app.</p><button className="primary" onClick={create}><Icon name="plus"/>New conversation</button></div> }
 function AgentLoading({ state, retry }: { state: AgentSnapshot['state']; retry: () => void }) { return <div className="empty-state loading"><div className="pulse-orb"/><p className="eyebrow">Local agent</p><h1>{state === 'needs-restart' ? 'The agent needs a restart.' : 'Preparing your local agent.'}</h1><p>{state === 'needs-restart' ? 'Your workspace is safe. Restart the local agent to continue.' : 'Starting the tools, skills, and session runtime on this Mac.'}</p>{state === 'needs-restart' && <button className="primary" onClick={retry}>Restart agent</button>}</div> }

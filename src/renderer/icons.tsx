@@ -9,7 +9,7 @@ export type IconName =
   | 'settings' | 'close' | 'plus' | 'branch' | 'panel'
   | 'folder' | 'folder-plus' | 'model' | 'provider' | 'shield' | 'runtime'
   | 'arrow' | 'file' | 'work' | 'complete' | 'request' | 'context' | 'error' | 'info'
-  | 'stop' | 'search' | 'sliders' | 'more' | 'chevron' | 'pencil' | 'trash'
+  | 'stop' | 'search' | 'sliders' | 'more' | 'chevron' | 'pencil' | 'trash' | 'robot'
 
 type IconDef = (size: number) => ReactNode
 
@@ -221,10 +221,21 @@ export const trash: IconDef = (s) => (
   </svg>
 )
 
+/** IconRobotOutline16 — robot/agent mode */
+export const robot: IconDef = (s) => (
+  <svg width={s} height={s} viewBox={VB16} fill="none" xmlns={NS}>
+    <path d="M8 1.5C5.51373 1.5 3.5 3.51373 3.5 6V10C3.5 10.5523 3.94772 11 4.5 11H11.5C12.0523 11 12.5 10.5523 12.5 10V6C12.5 3.51373 10.4863 1.5 8 1.5ZM5 6.25C5 6.11193 5.11193 6 5.25 6H6.25C6.38807 6 6.5 6.11193 6.5 6.25V7.25C6.5 7.38807 6.38807 7.5 6.25 7.5H5.25C5.11193 7.5 5 7.38807 5 7.25V6.25ZM9.5 6.25C9.5 6.11193 9.61193 6 9.75 6H10.75C10.8881 6 11 6.11193 11 6.25V7.25C11 7.38807 10.8881 7.5 10.75 7.5H9.75C9.61193 7.5 9.5 7.38807 9.5 7.25V6.25ZM7 8.5H9C9.27614 8.5 9.5 8.72386 9.5 9C9.5 9.27614 9.27614 9.5 9 9.5H7C6.72386 9.5 6.5 9.27614 6.5 9C6.5 8.72386 6.72386 8.5 7 8.5Z" fill="currentColor"/>
+    <path d="M8 0.5C7.72386 0.5 7.5 0.723858 7.5 1V1.5H8.5V1C8.5 0.723858 8.27614 0.5 8 0.5Z" fill="currentColor"/>
+    <path d="M2 8C2 7.72386 2.22386 7.5 2.5 7.5H3V8.5H2.5C2.22386 8.5 2 8.27614 2 8Z" fill="currentColor"/>
+    <path d="M13 8C13 7.72386 13.2239 7.5 13.5 7.5H14V8.5H13.5C13.2239 8.5 13 8.27614 13 8Z" fill="currentColor"/>
+    <path d="M5.5 13.5H10.5C10.7761 13.5 11 13.7239 11 14V14.5H5V14C5 13.7239 5.22386 13.5 5.5 13.5Z" fill="currentColor"/>
+  </svg>
+)
+
 /** Icon registry: maps IconName → render function (kebab-case safe) */
 export const iconMap: Record<IconName, IconDef> = {
   settings, close, plus, branch, panel,
   folder, 'folder-plus': folderPlus, model, provider, shield, runtime,
   arrow, file, work, complete, request, context, error, info, stop,
-  search, sliders, more, chevron, pencil, trash,
+  search, sliders, more, chevron, pencil, trash, robot,
 }
