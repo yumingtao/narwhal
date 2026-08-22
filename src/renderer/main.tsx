@@ -906,4 +906,12 @@ function ProviderRow({ provider, update, models, openModels, onDelete }: { provi
 }
 function PermissionSettings({ configuration, update }: { configuration: AgentConfiguration; update: (operation: () => Promise<AgentConfiguration>) => void }) { return <section className="settings-page"><p>This default is used by new conversations. It does not alter the current conversation.</p>{configuration.permissionOptions.length ? <label>New conversation permission<select value={configuration.defaultPermission ?? ''} onChange={(event) => { const next = event.target.value; if (next.toLowerCase().includes('full') && !window.confirm('Full access can allow unrestricted local tool operations. Continue?')) return; update(() => api.setDefaultPermission(next)) }}>{configuration.permissionOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label> : <p className="settings-empty">Permission presets are unavailable from this Host.</p>}</section> }
 function RuntimeSettings({ settings, agent, restart }: { settings: DesktopSettings; agent: AgentSnapshot; restart: () => void }) { return <section className="settings-page"><div className="settings-status"><span className={`status-dot ${agent.state}`}/><div><strong>{statusText(agent.state)}</strong><small>Local Agent runtime</small></div></div><dl className="settings-list"><div><dt>App version</dt><dd>{settings.appVersion}</dd></div><div><dt>Runtime</dt><dd>{settings.runtimeVersion}</dd></div><div><dt>Workbench data</dt><dd title={settings.dataDirectory}>{settings.dataDirectory}</dd></div></dl><button className="primary" type="button" onClick={restart} disabled={agent.state === 'starting'}>{agent.state === 'starting' ? 'Starting Agent…' : 'Restart Agent'}</button></section> }
+// Global error handling for renderer
+window.addEventListener('error', (e) => {
+  console.error('[narwhal] Renderer error:', e.error ?? e.message)
+})
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[narwhal] Unhandled promise rejection:', e.reason)
+})
+
 createRoot(document.getElementById('root')!).render(<StrictMode><App/></StrictMode>)

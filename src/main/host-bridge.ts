@@ -323,34 +323,50 @@ export class HostBridge {
   async setProviderBaseUrl(providerId: string, value: string): Promise<AgentConfiguration> { const baseUrl = value.trim(); const url = new URL(baseUrl); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Base URL must use HTTP or HTTPS'); const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {}); const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined; const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined; const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined; const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined; if (!ns || !path || !isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable'); await this.rpc('settings.mutate', { ns, ops: [{ op: 'set', path: [...path, 'baseURL'], value: baseUrl }], expectedRevision: section.revision }); return this.configuration() }
   async updateProvider(input: { provider: string; baseUrl?: string; modelIds?: string[] }): Promise<AgentConfiguration> {
     const providerId = input.provider
-    const config = await this.configuration()
-    const provider = config.providers.find((item) => item.id === providerId)
-    if (!provider) throw new Error('Provider not found')
-    // Validate and update baseUrl if provided
+    // Pre-validate inputs locally before touching the runtime so an invalid
+    // base URL or model ID fails without a round-trip.
+    let baseUrl: string | undefined
+    let models: { id: string; name: string }[] | undefined
     if (input.baseUrl !== undefined) {
-      const baseUrl = input.baseUrl.trim()
-      const url = new URL(baseUrl)
+      const trimmed = input.baseUrl.trim()
+      const url = new URL(trimmed)
       if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Base URL must use HTTP or HTTPS')
-      // TODO: Implement RPC call to update base URL in DSH runtime
+      baseUrl = trimmed
     }
-    // Validate and update modelIds if provided
     if (input.modelIds !== undefined) {
       const modelIds = input.modelIds.map((m) => m.trim()).filter(Boolean)
       if (!modelIds.length) throw new Error('At least one model ID is required')
-      modelIds.forEach((modelId) => {
-        if (!validModelId(modelId)) throw new Error(`Model ID "${modelId}" is invalid`)
-      })
-      // TODO: Implement RPC call to update models in DSH runtime
+      modelIds.forEach((modelId) => { if (!validModelId(modelId)) throw new Error(`Model ID "${modelId}" is invalid`) })
+      models = modelIds.map((modelId) => ({ id: modelId, name: modelId }))
     }
-    // TODO: Implement full RPC call to DSH runtime
+    if (baseUrl === undefined && models === undefined) return this.configuration()
+    const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {})
+    const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined
+    const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined
+    const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined
+    if (!ns || !path) throw new Error('Provider settings are unavailable')
+    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
+    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
+    if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
+    const ops: { op: 'set'; path: string[]; value: unknown }[] = []
+    if (baseUrl !== undefined) ops.push({ op: 'set', path: [...path, 'baseURL'], value: baseUrl })
+    if (models !== undefined) ops.push({ op: 'set', path: [...path, 'models'], value: models })
+    await this.rpc('settings.mutate', { ns, ops, expectedRevision: section.revision })
     return this.configuration()
   }
   async deleteProvider(providerId: string): Promise<AgentConfiguration> {
-    const config = await this.configuration()
-    const provider = config.providers.find((item) => item.id === providerId)
-    if (!provider) throw new Error('Provider not found')
-    // TODO: Implement RPC call to DSH runtime to delete provider
-    // For now, we just refresh the configuration
+    const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {})
+    const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined
+    const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined
+    const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined
+    if (!ns || !path) throw new Error('Provider not found')
+    // An empty path targets a built-in root provider (e.g. deepseek-official);
+    // unsetting it would wipe the whole namespace, so refuse it up front.
+    if (path.length === 0) throw new Error('Built-in providers cannot be removed')
+    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
+    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
+    if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
+    await this.rpc('settings.mutate', { ns, ops: [{ op: 'unset', path }], expectedRevision: section.revision })
     return this.configuration()
   }
   async createProvider(input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: string[]; apiKey?: string }): Promise<CreateProviderResult> {

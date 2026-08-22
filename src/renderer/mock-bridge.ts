@@ -665,7 +665,8 @@ const _mockBridge = Object.freeze({
 
 export const mockBridge: NarwhalBridge = _mockBridge as NarwhalBridge
 
-// Assign to window for browser usage
-if (typeof window !== 'undefined') {
+// The Electron preload bridge is deliberately read-only. Only install the
+// browser-preview mock when no trusted bridge has already been exposed.
+if (typeof window !== 'undefined' && !window.narwhal) {
   ;(window as unknown as { narwhal?: NarwhalBridge }).narwhal = mockBridge
 }

@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { appendFile, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell, Tray } from 'electron'
 import type { AgentConfiguration, AgentConversation, AgentSnapshot, Conversation, ConversationStatus, CreateProviderResult, Deliverable, DesktopSettings, GitChange, TodoItem, WorkbenchSnapshot, Workspace } from '../shared/desktop-contract.js'
 import { createHostSupervisor, type HostGeneration } from './host-supervisor.js'
@@ -11,7 +11,12 @@ import { resolveRuntime, type DshRuntime } from './runtime.js'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'narwhal', privileges: { secure: true, standard: true, supportFetchAPI: true } }])
 const recoveryUrl = new URL('../recovery/index.html', import.meta.url).toString()
-const appUrl = 'narwhal://app/index.html'
+const appPath = fileURLToPath(new URL('../renderer/index.html', import.meta.url))
+// Running an unpackaged Electron binary is not the same as running a Vite
+// dev server. The normal `pnpm dev` script builds the renderer first, so use
+// the local bundle unless a dev-server URL is explicitly supplied.
+const configuredDevUrl = process.env.NARWHAL_DEV_SERVER_URL
+const appUrl = configuredDevUrl ? new URL(configuredDevUrl).toString() : pathToFileURL(appPath).toString()
 const isPrimaryInstance = app.requestSingleInstanceLock()
 let windowRef: BrowserWindow | undefined
 let tray: Tray | undefined
@@ -35,14 +40,24 @@ function registerNarwhalProtocol(): void {
     const safePath = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '')
     const filePath = resolve(root, safePath)
     if (filePath !== root && !filePath.startsWith(`${root}${sep}`)) return new Response('Not found', { status: 404 })
-    try { return new Response(await readFile(filePath), { headers: { 'Content-Type': mediaTypes[extname(filePath)] ?? 'application/octet-stream' } }) } catch { return new Response('Not found', { status: 404 }) }
+    try {
+      const headers = {
+        'Content-Type': mediaTypes[extname(filePath)] ?? 'application/octet-stream',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+        'Cross-Origin-Resource-Policy': 'cross-origin',
+      }
+      return new Response(await readFile(filePath), { headers })
+    } catch { return new Response('Not found', { status: 404 }) }
   })
 }
 
 const currentWindow = () => windowRef
 const getSupervisor = () => { if (!activeSupervisor) throw new Error('Agent supervisor is unavailable'); return activeSupervisor }
 const isAppSender = (event: Electron.IpcMainInvokeEvent) => event.senderFrame?.url === appUrl
-const sender = (event: Electron.IpcMainInvokeEvent) => { if (!isAppSender(event)) throw new Error('Operation rejected for an untrusted renderer') }
+const isRecoverySender = (event: Electron.IpcMainInvokeEvent) => event.senderFrame?.url === recoveryUrl
+const sender = (event: Electron.IpcMainInvokeEvent, allowRecovery = false) => { if (!isAppSender(event) && !(allowRecovery && isRecoverySender(event))) throw new Error('Operation rejected for an untrusted renderer') }
 const asRecord = (value: unknown): Record<string, unknown> => { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid request'); return value as Record<string, unknown> }
 const asString = (value: unknown, field: string, max = 500): string => { if (typeof value !== 'string') throw new Error(`Invalid ${field}`); const text = value.trim(); if (!text || text.length > max) throw new Error(`Invalid ${field}`); return text }
 const emitAgent = () => windowRef?.webContents.send('narwhal:agent-state', agent)
@@ -136,7 +151,7 @@ function makeWindow(): BrowserWindow {
   browserWindow.webContents.session.setPermissionRequestHandler((_w, _permission, callback) => callback(false)); browserWindow.webContents.session.setPermissionCheckHandler(() => false)
   browserWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   browserWindow.webContents.on('will-navigate', (event, url) => { if (url !== appUrl && url !== recoveryUrl) event.preventDefault() })
-  browserWindow.on('close', (event) => { if (!isQuitting) { event.preventDefault(); browserWindow.hide() } }); browserWindow.once('ready-to-show', () => browserWindow.show())
+  browserWindow.on('close', (event) => { if (!isQuitting) { event.preventDefault(); browserWindow.hide() } }); browserWindow.once('ready-to-show', () => { browserWindow.show(); if (process.env.NARWHAL_DEBUG) browserWindow.webContents.openDevTools() })
   return browserWindow
 }
 async function loadApp(): Promise<void> { if (!windowRef) windowRef = makeWindow(); await windowRef.loadURL(appUrl) }
@@ -207,14 +222,38 @@ function registerIpc(): void {
       apiKey: value.apiKey === undefined ? undefined : asString(value.apiKey, 'API key', 500),
     })
   })
-  ipcMain.handle('narwhal:retry-agent', async (event) => { sender(event); await startHost() })
+  ipcMain.handle('narwhal:retry-agent', async (event) => {
+    sender(event, true)
+    try { await startHost() } catch (error) {
+      const diag = activeSupervisor?.diagnostics() ?? ''
+      const msg = `${new Date().toISOString()} retry-agent failed: ${error instanceof Error ? error.message : String(error)}${diag ? '\nSupervisor output:\n' + diag : ''}\n`
+      try { await appendFile(join(app.getPath('logs'), 'startup.log'), msg, { encoding: 'utf8', mode: 0o600 }) } catch { /* best-effort */ }
+      throw error
+    }
+  })
 }
 async function bootstrap(): Promise<void> {
+  console.log('[narwhal] bootstrap: registering protocol...')
   registerNarwhalProtocol(); await loadStore(); const dshHome = join(app.getPath('userData'), 'dsh-home'); await mkdir(dshHome, { recursive: true, mode: 0o700 }); selectedRuntime = resolveRuntime()
-  activeSupervisor = createHostSupervisor(() => spawn(app.isPackaged ? process.execPath : (process.env.DSH_NODE_EXECUTABLE ?? 'node'), [...selectedRuntime!.launchArguments, 'web', '--host', '127.0.0.1', '--port', '0'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
+  console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry)
+  activeSupervisor = createHostSupervisor(() => spawn(app.isPackaged ? process.execPath : (process.env.DSH_NODE_EXECUTABLE ?? 'node'), [...selectedRuntime!.launchArguments, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
   hostBridge.subscribe((conversation) => { emitConversation(conversation); scheduleWorkbenchRefresh() })
   registerIpc(); tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-tray.png')).resize({ width: 18, height: 18 })); tray.setToolTip('Narwhal Forge'); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show Narwhal Forge', click: () => windowRef?.show() }, { label: 'Quit', click: () => app.quit() }])); tray.on('click', () => windowRef?.show())
-  await loadApp(); try { await startHost() } catch (error) { agent = { state: 'needs-restart' }; emitAgent() }
+  console.log('[narwhal] bootstrap: loading app URL:', appUrl)
+  await loadApp();
+  console.log('[narwhal] bootstrap: app loaded, starting host...')
+  try {
+    await startHost()
+    console.log('[narwhal] bootstrap: host started successfully')
+  } catch (error) {
+    console.error('[narwhal] bootstrap: startHost FAILED:', error instanceof Error ? error.message : String(error))
+    agent = { state: 'needs-restart' }; emitAgent()
+    try {
+      const diag = activeSupervisor?.diagnostics() ?? ''
+      const msg = `${new Date().toISOString()} startHost failed: ${error instanceof Error ? error.message : String(error)}${diag ? '\nSupervisor output:\n' + diag : ''}\n`
+      await appendFile(join(app.getPath('logs'), 'startup.log'), msg, { encoding: 'utf8', mode: 0o600 })
+    } catch { /* best-effort logging */ }
+  }
 }
 if (!isPrimaryInstance) app.quit()
   else { app.on('second-instance', () => windowRef?.show()); app.on('window-all-closed', () => undefined); app.on('activate', () => windowRef?.show()); app.on('before-quit', (event) => { if (isQuitting) return; event.preventDefault(); isQuitting = true; const supervisor = activeSupervisor; void hostBridge.stop().finally(() => supervisor?.stop().finally(() => app.quit()) ?? app.quit()) }); void app.whenReady().then(bootstrap).catch(async (error) => showRecovery(error instanceof Error ? error : new Error(String(error)))) }
