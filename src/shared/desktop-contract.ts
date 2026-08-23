@@ -5,7 +5,7 @@ export interface Conversation { readonly id: string; readonly workspaceId: strin
 export interface Deliverable { readonly relativePath: string; readonly label: string; readonly pinnedAt: string }
 export interface Workspace { readonly id: string; readonly name: string; readonly displayPath: string; readonly lastOpenedAt: string }
 export interface GitChange { readonly path: string; readonly kind: string }
-export interface AgentSession { readonly id: string; readonly title: string; readonly updatedAt: number; readonly running: boolean }
+export interface AgentSession { readonly id: string; readonly title: string; readonly updatedAt: number; readonly running: boolean; readonly cwd?: string }
 export interface ChatItem { readonly id: string; readonly kind: 'user' | 'assistant' | 'trajectory' | 'error'; readonly text: string; readonly label?: string; readonly time: number; readonly streaming?: boolean }
 export interface UsageStats { readonly turns: number; readonly steps: number; readonly llmLatency: number; readonly ttftAvg: number; readonly tokenThroughput: number; readonly cacheHitRate: number; readonly inputTokens: number; readonly outputTokens: number }
 export interface AgentConversation { readonly sessions: readonly AgentSession[]; readonly selectedSessionId?: string; readonly messages: readonly ChatItem[]; readonly trajectory: readonly ChatItem[]; readonly running: boolean; readonly usage?: UsageStats }

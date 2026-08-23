@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
-import type { AgentConfiguration, AgentConversation, AgentSession, ChatItem, CreateProviderResult, CustomProviderCapability, ModelProvider, ProviderSetting } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSession, ChatItem, CreateProviderResult, CustomProviderCapability, ModelProvider, ProviderSetting, UsageStats } from '../shared/desktop-contract.js'
 import { classifyTrajectory } from '../shared/trajectory-classifier.js'
 
 type JsonRecord = Record<string, unknown>
@@ -8,10 +8,12 @@ type Listener = (conversation: AgentConversation) => void
 
 const MAX_TEXT = 24_000
 const MAX_ITEMS = 400
+const MAX_SEEN_EVENTS = 2_000
 
 function isRecord(value: unknown): value is JsonRecord { return !!value && typeof value === 'object' && !Array.isArray(value) }
 function string(value: unknown, limit = MAX_TEXT): string | undefined { return typeof value === 'string' ? value.slice(0, limit) : undefined }
 function number(value: unknown): number { return typeof value === 'number' && Number.isFinite(value) ? value : Date.now() }
+function finiteNumber(value: unknown): number | undefined { return typeof value === 'number' && Number.isFinite(value) ? value : undefined }
 function textBlocks(value: unknown): string {
   if (!Array.isArray(value)) return ''
   return value.flatMap((block) => isRecord(block) && block.type === 'text' && typeof block.text === 'string' ? [block.text] : []).join('\n').slice(0, MAX_TEXT)
@@ -125,10 +127,22 @@ export class HostBridge {
   private trajectory: ChatItem[] = []
   private listeners = new Set<Listener>()
   private running = false
+  private seenEventIds = new Set<string>()
+  private usage: UsageStats | undefined
+  private openSteps = new Map<string, { startedAt: number; firstTokenAt?: number }>()
+  private totalTtft = 0
+  private ttftSamples = 0
+  private decodeTokens = 0
+  private decodeMs = 0
+  private cacheReadTokens = 0
 
   subscribe(listener: Listener): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
-  snapshot(): AgentConversation { return { sessions: this.sessions, selectedSessionId: this.selectedSessionId, messages: this.messages, trajectory: this.trajectory, running: this.running } }
+  snapshot(): AgentConversation { return { sessions: this.sessions, selectedSessionId: this.selectedSessionId, messages: this.messages, trajectory: this.trajectory, running: this.running, ...(this.usage && { usage: this.usage }) } }
   private emit(): void { const value = this.snapshot(); for (const listener of this.listeners) listener(value) }
+  private resetSelectedSession(): void {
+    this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false; this.seenEventIds.clear(); this.usage = undefined; this.openSteps.clear(); this.totalTtft = 0; this.ttftSamples = 0; this.decodeTokens = 0; this.decodeMs = 0; this.cacheReadTokens = 0
+  }
+  clearSelection(): AgentConversation { this.resetSelectedSession(); this.emit(); return this.snapshot() }
 
   async start(origin: string): Promise<void> {
     await this.stop()
@@ -184,9 +198,49 @@ export class HostBridge {
     if (type === 'host/agent-error' && sessionId === this.selectedSessionId) this.pushTrajectory({ id: `error-${Date.now()}`, kind: 'error', label: 'Agent error', text: string(frame.message) ?? 'The local Agent reported an error.', time: Date.now() })
     if (type === 'host/session-added' || type === 'host/session-removed') void this.listSessions()
   }
-  private pushTrajectory(item: ChatItem): void { this.trajectory = [...this.trajectory, item].slice(-MAX_ITEMS); this.emit() }
+  private pushTrajectory(item: ChatItem, emit = true): void { this.trajectory = [...this.trajectory, item].slice(-MAX_ITEMS); if (emit) this.emit() }
+  private rememberEvent(sessionId: string, event: JsonRecord): boolean {
+    const seq = finiteNumber(event.seq)
+    if (seq === undefined) return true
+    const id = `${sessionId}:${seq}`
+    if (this.seenEventIds.has(id)) return false
+    this.seenEventIds.add(id)
+    if (this.seenEventIds.size > MAX_SEEN_EVENTS) this.seenEventIds.delete(this.seenEventIds.values().next().value as string)
+    return true
+  }
+  private updateUsage(event: JsonRecord, type: string, time: number): void {
+    const data = isRecord(event.data) ? event.data : {}
+    const step = finiteNumber(data.step)
+    const turn = finiteNumber(data.turn)
+    const key = step === undefined ? undefined : `${turn ?? 'unknown'}:${step}`
+    const current = () => this.usage ?? { turns: 0, steps: 0, llmLatency: 0, ttftAvg: 0, tokenThroughput: 0, cacheHitRate: 0, inputTokens: 0, outputTokens: 0 }
+    if (type === 'turn/start') { const value = current(); this.usage = { ...value, turns: value.turns + 1 }; return }
+    if (type === 'step/start' && key) { this.usage = current(); this.openSteps.set(key, { startedAt: time }); return }
+    if (type === 'assistant/chunk' && key) { const open = this.openSteps.get(key); if (open && open.firstTokenAt === undefined && eventText(event)) open.firstTokenAt = time; return }
+    if (type === 'assistant/message' && key) {
+      const open = this.openSteps.get(key)
+      if (!open) return
+      const value = current()
+      const message = isRecord(data.message) ? data.message : {}
+      const report = isRecord(data.usage) ? data.usage : isRecord(message.usage) ? message.usage : {}
+      const inputTokens = finiteNumber(report.inputTokens) ?? 0
+      const outputTokens = finiteNumber(report.outputTokens) ?? 0
+      this.cacheReadTokens += finiteNumber(report.cacheReadTokens) ?? finiteNumber(report.cachedInputTokens) ?? 0
+      if (open.firstTokenAt !== undefined) {
+        this.totalTtft += Math.max(0, open.firstTokenAt - open.startedAt); this.ttftSamples += 1
+        if (outputTokens > 0) { this.decodeTokens += outputTokens; this.decodeMs += Math.max(0, time - open.firstTokenAt) }
+      }
+      const nextInputTokens = value.inputTokens + inputTokens
+      this.usage = { ...value, llmLatency: value.llmLatency + Math.max(0, time - open.startedAt), ttftAvg: this.ttftSamples ? Math.round(this.totalTtft / this.ttftSamples) : 0, tokenThroughput: this.decodeMs ? Math.round(this.decodeTokens / (this.decodeMs / 1_000)) : 0, cacheHitRate: nextInputTokens ? Math.round(this.cacheReadTokens / nextInputTokens * 100) : 0, inputTokens: nextInputTokens, outputTokens: value.outputTokens + outputTokens }
+      this.openSteps.delete(key)
+      return
+    }
+    if (type === 'step/end') { const value = current(); this.usage = { ...value, steps: value.steps + 1 }; if (key) this.openSteps.delete(key) }
+  }
   private ingestEvent(sessionId: string, event: JsonRecord): void {
+    if (!this.rememberEvent(sessionId, event)) return
     const type = string(event.type, 80) ?? 'event'; const seq = number(event.seq); const time = number(event.time)
+    this.updateUsage(event, type, time)
     if (type === 'user/message' && (!isRecord(event.data) || !isRecord(event.data.source) || event.data.source.kind !== 'user')) {
       this.pushTrajectory({ id: `${sessionId}:${seq}`, kind: 'trajectory', label: 'Updated context', text: 'Workspace context was refreshed for this turn.', time })
       return
@@ -201,7 +255,7 @@ export class HostBridge {
       }
     } else {
       const traj = trajectoryFor(event, type)
-      if (traj) this.pushTrajectory({ id: `${sessionId}:${seq}`, kind: traj.kind, label: traj.label, text: traj.text, time })
+      if (traj) this.pushTrajectory({ id: `${sessionId}:${seq}`, kind: traj.kind, label: traj.label, text: traj.text, time }, false)
       if (type === 'turn/end') {
         this.running = false
         this.messages = this.messages.map((item) => item.id === `${sessionId}:stream` ? { ...item, streaming: false } : item)
@@ -219,27 +273,28 @@ export class HostBridge {
     if (!isRecord(envelope) || envelope.type !== 'server-response' || !isRecord(envelope.result) || envelope.result.ok !== true) throw new Error('Local Agent rejected the request')
     return envelope.result.value as T
   }
-  async listSessions(cwd?: string): Promise<AgentConversation> {
+  async listSessions(): Promise<AgentConversation> {
     const value = await this.rpc<{ items?: unknown }>('session.list', {})
     const rows = Array.isArray(value.items) ? value.items : []
     this.sessions = rows.flatMap((row): AgentSession[] => {
       if (!isRecord(row)) return []
-      const id = validId(row.sessionId); if (!id || (cwd && row.cwd !== cwd)) return []
+      const id = validId(row.sessionId); if (!id) return []
       const title = isRecord(row.projections) && isRecord(row.projections.values) ? string(row.projections.values.title, 120) : undefined
-      return [{ id, title: title || (row.blank === true ? 'New conversation' : 'Untitled conversation'), updatedAt: number(row.updatedAt), running: row.running === true }]
+      return [{ id, title: title || (row.blank === true ? 'New conversation' : 'Untitled conversation'), updatedAt: number(row.updatedAt), running: row.running === true, cwd: string(row.cwd, 2_000) }]
     }).sort((a, b) => b.updatedAt - a.updatedAt)
-    if (this.selectedSessionId && !this.sessions.some((item) => item.id === this.selectedSessionId)) { this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false }
+    if (this.selectedSessionId && !this.sessions.some((item) => item.id === this.selectedSessionId)) this.resetSelectedSession()
     this.emit(); return this.snapshot()
   }
   async createSession(cwd: string): Promise<AgentConversation> {
     const value = await this.rpc<{ sessionId?: unknown }>('session.create', { cwd })
     const id = validId(value.sessionId); if (!id) throw new Error('Local Agent returned an invalid session')
-    await this.listSessions(cwd); this.selectedSessionId = id; this.messages = []; this.trajectory = []; this.running = false; this.emit(); return this.snapshot()
+    await this.listSessions(); this.resetSelectedSession(); this.selectedSessionId = id; this.emit(); return this.snapshot()
   }
   async selectSession(sessionId: string, cwd: string): Promise<AgentConversation> {
-    if (!this.sessions.some((item) => item.id === sessionId)) await this.listSessions(cwd)
-    if (!this.sessions.some((item) => item.id === sessionId)) throw new Error('Conversation is not available in this workspace')
-    this.selectedSessionId = sessionId; this.messages = []; this.trajectory = []; this.running = this.sessions.find((item) => item.id === sessionId)?.running === true; this.emit()
+    if (!this.sessions.some((item) => item.id === sessionId)) await this.listSessions()
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session || session.cwd !== cwd) throw new Error('Conversation is not available in this workspace')
+    this.resetSelectedSession(); this.selectedSessionId = sessionId; this.running = session.running; this.emit()
     await this.refreshHistory(sessionId)
     return this.snapshot()
   }

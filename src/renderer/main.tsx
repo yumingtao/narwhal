@@ -4,7 +4,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github-dark.css'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, ChatItem, Conversation, DesktopSettings, WorkbenchSnapshot } from '../shared/desktop-contract'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, ChatItem, Conversation, DesktopSettings, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
 import { classifyTrajectory } from '../shared/trajectory-classifier'
 import { buildTrajectoryData } from './trajectory/builder'
 import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar'
@@ -28,6 +28,24 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
 function statusText(state: AgentSnapshot['state']) { return state === 'ready' ? 'Agent ready' : state === 'starting' ? 'Starting agent' : 'Agent needs restart' }
 function formatTokens(n: number) { return n >= 1000 ? `${(n / 1000).toFixed(1)}K` : `${n}` }
 function formatLatency(ms: number) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms` }
+type StatusMetrics = Pick<UsageStats, 'turns' | 'steps'> & Partial<Omit<UsageStats, 'turns' | 'steps'>>
+
+function deriveStatusMetrics(conversation: AgentConversation): StatusMetrics {
+  if (conversation.usage) return conversation.usage
+
+  const completedSteps = conversation.trajectory.filter((item) => item.label === 'Step completed').length
+  const startedSteps = conversation.trajectory.filter((item) => item.label === 'Started analysis').length
+  return {
+    // Message history is the authoritative local record of user-initiated turns.
+    turns: conversation.messages.filter((item) => item.kind === 'user').length,
+    // A step can expose a start, a completion, or both; count each completed step
+    // once, while still showing in-progress work when completion events are absent.
+    steps: Math.max(completedSteps, startedSteps),
+  }
+}
+
+function formatOptionalLatency(value: number | undefined) { return value === undefined ? '—' : formatLatency(value) }
+function formatOptionalTokens(value: number | undefined) { return value === undefined ? '—' : formatTokens(value) }
 function formatRelativeTime(dateStr: string) {
   const now = new Date()
   const date = new Date(dateStr)
@@ -112,6 +130,34 @@ function App() {
   const workspace = workbench.workspaces.find((item) => item.id === workbench.selectedWorkspaceId)
   const mutate = async (operation: () => Promise<WorkbenchSnapshot>) => { try { setError(''); const next = await operation(); setWorkbench(next); setConversation(next.conversation) } catch { setError('We couldn’t complete that action. Your local files were not changed.') } }
   const agentCall = async (operation: () => Promise<AgentConversation>) => { try { setError(''); setConversation(await operation()) } catch { setError('The local Agent could not complete that request. Check its status and try again.') } }
+  const createSession = async (workspaceId: string) => {
+    try {
+      setError('')
+      if (workspaceId !== workbench.selectedWorkspaceId) {
+        const next = await api.selectWorkspace(workspaceId)
+        setWorkbench(next)
+        setConversation(next.conversation)
+      }
+      setConversation(await api.createSession())
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown error'
+      setError(`Couldn’t create a local Agent session in this workspace: ${detail}`)
+    }
+  }
+  const selectSessionForWorkspace = async (workspaceId: string, sessionId: string) => {
+    try {
+      setError('')
+      if (workspaceId !== workbench.selectedWorkspaceId) {
+        const next = await api.selectWorkspace(workspaceId)
+        setWorkbench(next)
+        setConversation(next.conversation)
+      }
+      setConversation(await api.selectSession(sessionId))
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unknown error'
+      setError(`Couldn’t open this local Agent session: ${detail}`)
+    }
+  }
   useEffect(() => {
     void api.bootstrap().then(({ agent, workbench, settings }) => { setAgent(agent); setSettings(settings); setWorkbench(workbench); setConversation(workbench.conversation) }).catch(() => setError('Narwhal Forge could not load its local workspace data.'))
     const unAgent = api.onAgentState(setAgent); const unConversation = api.onConversation(setConversation)
@@ -160,18 +206,34 @@ function App() {
     document.addEventListener('mouseup', onUp)
   }
   const onPanelDoubleClick = () => { setPanelWidth(DEFAULT_PANEL_WIDTH) }
+  const gitChanges = workbench.git.changes
+  const gitSummary = gitChanges.length
+    ? `${gitChanges.length} ${gitChanges.length === 1 ? 'change' : 'changes'}`
+    : 'Clean'
+  const statusMetrics = useMemo(() => deriveStatusMetrics(conversation), [conversation])
   return <main className="app-shell">
-    <header className="titlebar"><div className="drag-space" aria-hidden="true"/><div className="brand no-drag"><img src="./assets/narwhal-icon.png"/><div className="brand-name-block"><span className="brand-name">Narwhal Forge</span><span className="brand-sub">Based on DeepSeek Harness</span></div></div><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
+    <header className="titlebar"><div className="drag-space" aria-hidden="true"/><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
     <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}`} style={layoutStyle}>
       <aside className="sidebar">
-        <SideBar workbench={workbench} selectedConversation={selectedConversation} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createConversation={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} selectConversation={(id) => void mutate(() => api.selectConversation(id))} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
+        <div className="sidebar-identity" aria-label="Narwhal Forge"><img src="./assets/narwhal-icon.png" alt=""/><div><span className="sidebar-product-name">Narwhal Forge</span><span className="sidebar-product-subtitle">Based on DeepSeek Harness</span></div></div>
+        <SideBar workbench={workbench} sessions={conversation.sessions} selectedSessionId={conversation.selectedSessionId} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={(workspaceId) => void createSession(workspaceId)} selectSession={(workspaceId, sessionId) => void selectSessionForWorkspace(workspaceId, sessionId)} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
         <div className="side-foot"><button onClick={() => setSettingsOpen(true)}><Icon name="settings"/>Settings</button></div>
       </aside>
       <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
         {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''}/>} 
-        <footer className="statusbar">{conversation.usage ? <span className="usage-metrics"><strong>{conversation.usage.turns}</strong> turns<em/>{conversation.usage.steps} steps<em/>LLM <strong>{formatLatency(conversation.usage.llmLatency)}</strong><em/>TTFT avg <strong>{formatLatency(conversation.usage.ttftAvg)}</strong><em/><strong>{conversation.usage.tokenThroughput}</strong> tok/s<em/>Cache hit <strong>{conversation.usage.cacheHitRate}%</strong><em/>Input <strong>{formatTokens(conversation.usage.inputTokens)} tok</strong><em/>Output <strong>{conversation.usage.outputTokens} tok</strong></span> : null}<span className="statusbar-right"><span><Icon name="branch"/>{workbench.git.branch ?? 'No Git repository'}</span></span></footer>
+        <footer className="statusbar">
+          <div className="statusbar-context">
+            <span className="statusbar-workspace" title={workspace?.displayPath ?? workspace?.name}><Icon name="folder"/>{workspace?.name ?? 'No workspace'}</span>
+            <span className={`statusbar-git${workbench.git.branch ? '' : ' unavailable'}`} title={workbench.git.branch ? `${workbench.git.branch} · ${gitSummary}` : 'No Git repository'}><Icon name="branch"/>{workbench.git.branch ?? 'No Git repository'}{workbench.git.branch && <small>{gitSummary}</small>}</span>
+          </div>
+          <div className="statusbar-metrics-scroll" aria-label="Run metrics">
+            <span className="usage-metrics">
+              <strong>{statusMetrics.turns}</strong> turns<em/>{statusMetrics.steps} steps<em/>LLM <strong>{formatOptionalLatency(statusMetrics.llmLatency)}</strong><em/>TTFT avg <strong>{formatOptionalLatency(statusMetrics.ttftAvg)}</strong><em/><strong>{statusMetrics.tokenThroughput ?? '—'}</strong> tok/s<em/>Cache hit <strong>{statusMetrics.cacheHitRate === undefined ? '—' : `${statusMetrics.cacheHitRate}%`}</strong><em/>Input <strong>{formatOptionalTokens(statusMetrics.inputTokens)} tok</strong><em/>Output <strong>{formatOptionalTokens(statusMetrics.outputTokens)} tok</strong>
+            </span>
+          </div>
+        </footer>
       </section>
       {workbench.panelOpen && <div className="panel-resizer" onMouseDown={onPanelResizeStart} onDoubleClick={onPanelDoubleClick} title="Drag to resize · Double-click to reset"/>} 
       {workbench.panelOpen && <aside className="context-panel open" style={{ width: panelWidth }}><div className="panel-head"><div><p>Work context</p><h2>{selectedConversation?.title ?? 'No conversation selected'}</h2></div><button title="Close panel" onClick={() => void mutate(() => api.setPanelOpen(false))}><Icon name="close"/></button></div>{!workspace ? <p className="panel-empty">Choose a workspace to keep its plan, changed files and deliverables together.</p> : <><ConversationSection conversation={selectedConversation} onSelect={(conversationId) => void mutate(() => api.selectConversation(conversationId))} onNew={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} onUpdate={(input) => void mutate(() => api.updateConversation(input))} onTodo={(conversationId, todoId, done) => void mutate(() => api.toggleTodo({ conversationId, todoId, done }))} onAddTodo={(conversationId, text) => void mutate(() => api.addTodo({ conversationId, text }))}/><ChangesSection changes={workbench.git.changes}/><DeliverablesSection entries={workbench.deliverables} onNew={() => setDeliverableDraft(true)} onReveal={(path) => void api.revealDeliverable(path)} onRemove={(path) => void mutate(() => api.unpinDeliverable(path))}/></>}</aside>}
@@ -187,7 +249,7 @@ const CONVERSATIONS_PER_PAGE = 5
 type GroupBy = 'workspace' | 'flat'
 type OrderBy = 'manual' | 'lastUpdated'
 
-function SideBar({ workbench, selectedConversation, choose, selectWorkspace, createConversation, selectConversation, renameWorkspace, deleteWorkspace }: { workbench: WorkbenchSnapshot; selectedConversation: Conversation | undefined; choose: () => void; selectWorkspace: (id: string) => void; createConversation: () => void; selectConversation: (id: string) => void; renameWorkspace: (id: string, name: string) => void; deleteWorkspace: (id: string) => void }) {
+function SideBar({ workbench, sessions, selectedSessionId, choose, selectWorkspace, createSession, selectSession, renameWorkspace, deleteWorkspace }: { workbench: WorkbenchSnapshot; sessions: AgentConversation['sessions']; selectedSessionId?: string; choose: () => void; selectWorkspace: (id: string) => void; createSession: (workspaceId: string) => void; selectSession: (workspaceId: string, sessionId: string) => void; renameWorkspace: (id: string, name: string) => void; deleteWorkspace: (id: string) => void }) {
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({})
   const [filterMenuOpen, setFilterMenuOpen] = useState(false)
@@ -204,11 +266,13 @@ function SideBar({ workbench, selectedConversation, choose, selectWorkspace, cre
   const isExpanded = (id: string) => expandedWorkspaces[id] ?? id === workbench.selectedWorkspaceId
   const getVisibleCount = (id: string) => visibleCounts[id] ?? CONVERSATIONS_PER_PAGE
   const loadMore = (id: string) => {
-    setVisibleCounts((prev) => ({ ...prev, [id]: Math.min((prev[id] ?? CONVERSATIONS_PER_PAGE) + CONVERSATIONS_PER_PAGE, workbench.conversations.filter((c) => c.workspaceId === id).length) }))
+    const workspace = workbench.workspaces.find((item) => item.id === id)
+    const sessionCount = workspace ? sessions.filter((session) => session.cwd === workspace.displayPath).length : 0
+    setVisibleCounts((prev) => ({ ...prev, [id]: Math.min((prev[id] ?? CONVERSATIONS_PER_PAGE) + CONVERSATIONS_PER_PAGE, sessionCount) }))
   }
-  const sortConversations = (convs: Conversation[]) => {
-    if (orderBy === 'lastUpdated') return [...convs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    return convs
+  const sortSessions = (items: AgentConversation['sessions']) => {
+    if (orderBy === 'lastUpdated') return [...items].sort((a, b) => b.updatedAt - a.updatedAt)
+    return items
   }
 
   // Filter menu popup
@@ -254,7 +318,7 @@ function SideBar({ workbench, selectedConversation, choose, selectWorkspace, cre
       <div className="workspace-list">
         {workbench.workspaces.length ? (
           groupBy === 'workspace' ? workbench.workspaces.map((item) => {
-            const allConvs = sortConversations(workbench.conversations.filter((c) => c.workspaceId === item.id))
+            const allConvs = sortSessions(sessions.filter((session) => session.cwd === item.displayPath))
             const expanded = isExpanded(item.id)
             const visibleCount = getVisibleCount(item.id)
             const visibleConvs = allConvs.slice(0, visibleCount)
@@ -300,7 +364,7 @@ function SideBar({ workbench, selectedConversation, choose, selectWorkspace, cre
                       className="heading-icon workspace-action-btn"
                       aria-label="New session"
                       title="New session"
-                      onClick={() => { selectWorkspace(item.id); createConversation() }}
+                      onClick={() => createSession(item.id)}
                     >
                       <Icon name="plus" size={14}/>
                     </button>
@@ -326,8 +390,8 @@ function SideBar({ workbench, selectedConversation, choose, selectWorkspace, cre
                     {allConvs.length ? visibleConvs.map((conv) => (
                       <button
                         key={conv.id}
-                        className={conv.id === selectedConversation?.id ? 'session active' : 'session'}
-                        onClick={() => selectConversation(conv.id)}
+                        className={conv.id === selectedSessionId ? 'session active' : 'session'}
+                        onClick={() => selectSession(item.id, conv.id)}
                       >
                         <span className="session-title">{conv.title}</span>
                         <small>{formatRelativeTime(conv.updatedAt)}</small>
@@ -347,23 +411,27 @@ function SideBar({ workbench, selectedConversation, choose, selectWorkspace, cre
             <>
               <div className="side-section top-section">
                 <button className="btn-new-session" onClick={() => {
-                  createConversation()
+                  if (workbench.selectedWorkspaceId) createSession(workbench.selectedWorkspaceId)
                 }}>
                   <Icon name="plus" size={16}/>
                   <span>New Session</span>
                 </button>
               </div>
-              {sortConversations([...workbench.conversations]).slice(0, CONVERSATIONS_PER_PAGE).map((conv) => (
+              {sortSessions(sessions).slice(0, CONVERSATIONS_PER_PAGE).map((conv) => {
+                const workspace = workbench.workspaces.find((item) => item.displayPath === conv.cwd)
+                return (
                 <button
                   key={conv.id}
-                  className={conv.id === selectedConversation?.id ? 'session active' : 'session'}
-                  onClick={() => selectConversation(conv.id)}
+                  className={conv.id === selectedSessionId ? 'session active' : 'session'}
+                  disabled={!workspace}
+                  onClick={() => { if (workspace) selectSession(workspace.id, conv.id) }}
                 >
                   <span className="session-title">{conv.title}</span>
                   <small>{formatRelativeTime(conv.updatedAt)}</small>
                 </button>
-              ))}
-              {workbench.conversations.length > CONVERSATIONS_PER_PAGE && (
+                )
+              })}
+              {sessions.length > CONVERSATIONS_PER_PAGE && (
                 <button className="load-more">Load more</button>
               )}
             </>
@@ -599,10 +667,26 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const [permMenuOpen, setPermMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
+  const permissionTrigger = useRef<HTMLButtonElement>(null)
+  const modelTrigger = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     if (running) { setText(''); input.current?.blur() }
   }, [running])
+
+  useEffect(() => {
+    if (!permMenuOpen && !modelMenuOpen) return
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      const trigger = permMenuOpen ? permissionTrigger.current : modelTrigger.current
+      setPermMenuOpen(false)
+      setModelMenuOpen(false)
+      requestAnimationFrame(() => trigger?.focus())
+    }
+    document.addEventListener('keydown', dismissOnEscape)
+    return () => document.removeEventListener('keydown', dismissOnEscape)
+  }, [permMenuOpen, modelMenuOpen])
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
@@ -660,11 +744,15 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
           {/* Permission selector pill */}
           <div className="selector-pill-wrapper">
             <button
+              ref={permissionTrigger}
               type="button"
               className="selector-pill composer-permission-pill"
               disabled={!configuration.available || running || !configuration.permissionOptions.length}
               onClick={() => { setPermMenuOpen(!permMenuOpen); setModelMenuOpen(false) }}
               title="Set default conversation permission"
+              aria-haspopup="menu"
+              aria-expanded={permMenuOpen}
+              aria-controls="composer-permission-menu"
             >
               <Icon name="shield" size={13}/>
               <span className="selector-pill-label">{currentPermission?.label ?? 'Permission'}</span>
@@ -673,11 +761,14 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
             {permMenuOpen && configuration.available && configuration.permissionOptions.length > 0 && (
               <>
                 <div className="menu-overlay" onClick={() => setPermMenuOpen(false)}/>
-                <div className="menu-popup selector-menu" onClick={(e) => e.stopPropagation()}>
+                <div id="composer-permission-menu" className="menu-popup selector-menu" role="menu" aria-label="Conversation permission" onClick={(e) => e.stopPropagation()}>
                   <div className="menu-section">
                     {configuration.permissionOptions.map((option) => (
                       <button
+                        type="button"
                         key={option.id}
+                        role="menuitemradio"
+                        aria-checked={option.id === permissionValue}
                         className={`menu-item ${option.id === permissionValue ? 'active' : ''}`}
                         onClick={() => { void selectPermission(option.id); setPermMenuOpen(false) }}
                       >
@@ -694,11 +785,15 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
           {configuration.available && provider && model ? (
             <div className="selector-pill-wrapper">
               <button
+                ref={modelTrigger}
                 type="button"
                 className="selector-pill composer-model-pill"
                 disabled={modelPickerDisabled}
                 onClick={() => { setModelMenuOpen(!modelMenuOpen); setPermMenuOpen(false) }}
                 title="Switch provider and model"
+                aria-haspopup="menu"
+                aria-expanded={modelMenuOpen}
+                aria-controls="composer-model-menu"
               >
                 <span className="selector-pill-label">
                   {model.name}
@@ -709,7 +804,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
               {modelMenuOpen && (
                 <>
                   <div className="menu-overlay" onClick={() => setModelMenuOpen(false)}/>
-                  <div className="menu-popup selector-menu model-selector-menu" onClick={(e) => e.stopPropagation()}>
+                  <div id="composer-model-menu" className="menu-popup selector-menu model-selector-menu" role="menu" aria-label="Model selection" onClick={(e) => e.stopPropagation()}>
                     <div className="menu-section">
                       {groups.map((group) => (
                         <div key={group.id} className="model-provider-group">
@@ -720,6 +815,9 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                             return (
                               <div key={`${group.id}-${m.id}`}>
                                 <button
+                                  type="button"
+                                  role="menuitemradio"
+                                  aria-checked={isActive && defaultEffort === effort}
                                   className={`menu-item model-menu-item ${isActive ? 'active' : ''}`}
                                   onClick={() => handleModelSelect(group.id, m.id, defaultEffort)}
                                 >
@@ -730,6 +828,9 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                                   <div className="effort-submenu">
                                     {m.efforts.map((eff) => (
                                       <button
+                                        type="button"
+                                        role="menuitemradio"
+                                        aria-checked={eff.id === currentEffort?.id}
                                         key={eff.id}
                                         className={`menu-item effort-menu-item ${eff.id === currentEffort?.id ? 'active' : ''}`}
                                         onClick={() => handleModelSelect(group.id, m.id, eff.id)}
