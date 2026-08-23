@@ -99,6 +99,8 @@ const DEFAULT_SIDEBAR_WIDTH = 236
 const MIN_SIDEBAR_WIDTH = 160
 const MAX_SIDEBAR_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'narwhal:sidebar-width'
+const SIDEBAR_COLLAPSED_KEY = 'narwhal:sidebar-collapsed'
+const COLLAPSED_SIDEBAR_WIDTH = 54
 const DEFAULT_PANEL_WIDTH = 304
 const MIN_PANEL_WIDTH = 220
 const MAX_PANEL_WIDTH = 500
@@ -122,6 +124,7 @@ function App() {
     const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY)
     return stored ? Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, parseInt(stored, 10))) : DEFAULT_SIDEBAR_WIDTH
   })
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true')
   const [panelWidth, setPanelWidth] = useState(() => {
     const stored = localStorage.getItem(PANEL_WIDTH_KEY)
     return stored ? Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, parseInt(stored, 10))) : DEFAULT_PANEL_WIDTH
@@ -170,10 +173,15 @@ function App() {
   useEffect(() => { if (workspace && agent.state === 'ready') void agentCall(api.listSessions) }, [workspace?.id, agent.state])
   useEffect(() => { localStorage.setItem('narwhal:agent-mode', mode) }, [mode])
   useEffect(() => { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)) }, [sidebarWidth])
+  useEffect(() => { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed)) }, [sidebarCollapsed])
   useEffect(() => { localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)) }, [panelWidth])
-  const layoutStyle = workbench.panelOpen
-    ? { gridTemplateColumns: `${sidebarWidth}px 5px minmax(390px, 1fr) 5px ${panelWidth}px` }
-    : { gridTemplateColumns: `${sidebarWidth}px 5px minmax(390px, 1fr)` }
+  const layoutStyle = sidebarCollapsed
+    ? workbench.panelOpen
+      ? { gridTemplateColumns: `${COLLAPSED_SIDEBAR_WIDTH}px minmax(390px, 1fr) 5px ${panelWidth}px` }
+      : { gridTemplateColumns: `${COLLAPSED_SIDEBAR_WIDTH}px minmax(390px, 1fr)` }
+    : workbench.panelOpen
+      ? { gridTemplateColumns: `${sidebarWidth}px 5px minmax(390px, 1fr) 5px ${panelWidth}px` }
+      : { gridTemplateColumns: `${sidebarWidth}px 5px minmax(390px, 1fr)` }
   const onSidebarResizeStart = (e: React.MouseEvent) => {
     e.preventDefault()
     const startX = e.clientX
@@ -213,13 +221,13 @@ function App() {
   const statusMetrics = useMemo(() => deriveStatusMetrics(conversation), [conversation])
   return <main className="app-shell">
     <header className="titlebar"><div className="drag-space" aria-hidden="true"/><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
-    <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}`} style={layoutStyle}>
-      <aside className="sidebar">
-        <div className="sidebar-identity" aria-label="Narwhal Forge"><img src="./assets/narwhal-icon.png" alt=""/><div><span className="sidebar-product-name">Narwhal Forge</span><span className="sidebar-product-subtitle">Based on DeepSeek Harness</span></div></div>
+    <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}`} style={layoutStyle}>
+      <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
+        <div className="sidebar-identity" aria-label="Narwhal Forge"><img src="./assets/narwhal-icon.png" alt=""/><div><span className="sidebar-product-name">Narwhal Forge</span><span className="sidebar-product-subtitle">Based on DeepSeek Harness</span></div><button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}><Icon name="panel" size={17}/></button></div>
         <SideBar workbench={workbench} sessions={conversation.sessions} selectedSessionId={conversation.selectedSessionId} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={(workspaceId) => void createSession(workspaceId)} selectSession={(workspaceId, sessionId) => void selectSessionForWorkspace(workspaceId, sessionId)} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
         <div className="side-foot"><button onClick={() => setSettingsOpen(true)}><Icon name="settings"/>Settings</button></div>
       </aside>
-      <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>
+      {!sidebarCollapsed && <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>}
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
         {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''}/>} 
