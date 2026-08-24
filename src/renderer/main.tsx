@@ -95,7 +95,7 @@ const markdownComponents: Components = {
 }
 export function MarkdownMessage({ content }: { content: string }) { return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>{content}</ReactMarkdown> }
 
-const DEFAULT_SIDEBAR_WIDTH = 236
+const DEFAULT_SIDEBAR_WIDTH = 285
 const MIN_SIDEBAR_WIDTH = 160
 const MAX_SIDEBAR_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'narwhal:sidebar-width'
@@ -122,6 +122,8 @@ function App() {
   })
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY)
+    // Migrate: clear the previous default (236) so the new default (285) takes effect
+    if (stored === '236') { localStorage.removeItem(SIDEBAR_WIDTH_KEY); return DEFAULT_SIDEBAR_WIDTH }
     return stored ? Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, parseInt(stored, 10))) : DEFAULT_SIDEBAR_WIDTH
   })
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true')
