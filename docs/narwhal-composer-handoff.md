@@ -2,7 +2,7 @@
 
 ## Scope
 
-Continue development of the chat composer in `/Users/YMINGTA/01_YMT/narwhal-forge-macos`.
+Continue development of the chat composer in `/Users/YMINGTA/01_YMT/narwhal`.
 
 Original user requirements:
 

@@ -9,6 +9,12 @@ import { createHostSupervisor, type HostGeneration } from './host-supervisor.js'
 import { HostBridge } from './host-bridge.js'
 import { resolveRuntime, type DshRuntime } from './runtime.js'
 
+// Keep reading the existing local workbench after renaming the package from
+// narwhal-forge-macos to narwhal. A future data-directory migration can move
+// this deliberately, rather than making current sessions appear to vanish.
+// An explicit user-data directory remains available for tests and diagnostics.
+const hasCustomUserDataDirectory = process.argv.some((argument) => argument === '--user-data-dir' || argument.startsWith('--user-data-dir='))
+if (!hasCustomUserDataDirectory) app.setPath('userData', join(app.getPath('appData'), 'narwhal-forge-macos'))
 protocol.registerSchemesAsPrivileged([{ scheme: 'narwhal', privileges: { secure: true, standard: true, supportFetchAPI: true } }])
 const recoveryUrl = new URL('../recovery/index.html', import.meta.url).toString()
 const appPath = fileURLToPath(new URL('../renderer/index.html', import.meta.url))

@@ -13,7 +13,7 @@ pnpm dev
 
 Set `DSH_RUNTIME_ROOT` to use another verified checkout, or `DSH_NODE_EXECUTABLE` when the appropriate Node binary is not on `PATH`.
 
-Narwhal workbench data is atomically stored under `~/Library/Application Support/narwhal-forge-macos/narwhal-forge/workbench.json`, separate from all project repositories. V1 disables Harness telemetry and forwards `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` only when present in the launching environment.
+Narwhal workbench data is atomically stored under `~/Library/Application Support/narwhal-forge-macos/narwhal-forge/workbench.json`, separate from all project repositories. The application deliberately continues to use this legacy path so existing local workspaces and sessions remain available after the package rename. V1 disables Harness telemetry and forwards `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` only when present in the launching environment.
 
 ## V1 capabilities
 

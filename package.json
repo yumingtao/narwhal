@@ -1,5 +1,5 @@
 {
-  "name": "narwhal-forge-macos",
+  "name": "narwhal",
   "version": "0.1.0",
   "private": true,
   "description": "Narwhal, a local-first personal AI coding workbench for macOS.",
@@ -33,7 +33,7 @@
     ]
   },
   "build": {
-    "appId": "com.example.narwhalforge",
+    "appId": "com.example.narwhal",
     "productName": "Narwhal",
     "icon": "build/icon.icns",
     "asar": true,

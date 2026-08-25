@@ -31,7 +31,7 @@ async function retryAgent(): Promise<void> {
 }
 
 retry?.addEventListener('click', () => { void retryAgent() })
-diagnostics?.addEventListener('click', () => { setStatus('启动日志位于应用日志文件夹：~/Library/Logs/narwhal-forge-macos/') })
+diagnostics?.addEventListener('click', () => { setStatus('启动日志位于应用日志文件夹。') })
 quit?.addEventListener('click', () => { window.close() })
 
 // Auto-retry on load
