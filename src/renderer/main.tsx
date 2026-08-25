@@ -95,7 +95,7 @@ const markdownComponents: Components = {
 }
 export function MarkdownMessage({ content }: { content: string }) { return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>{content}</ReactMarkdown> }
 
-const DEFAULT_SIDEBAR_WIDTH = 236
+const DEFAULT_SIDEBAR_WIDTH = 285
 const MIN_SIDEBAR_WIDTH = 160
 const MAX_SIDEBAR_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'narwhal:sidebar-width'
