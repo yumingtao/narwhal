@@ -14,7 +14,7 @@ const mockAgent: AgentSnapshot = { state: 'ready', origin: 'http://127.0.0.1:187
 
 const mockWorkbench: WorkbenchSnapshot = {
   workspaces: [
-    { id: 'ws-1', name: 'Narwhal Forge', displayPath: '/Users/dev/narwhal-forge', lastOpenedAt: '2026-08-18T10:00:00Z' },
+    { id: 'ws-1', name: 'Narwhal', displayPath: '/Users/dev/narwhal-forge', lastOpenedAt: '2026-08-18T10:00:00Z' },
   ],
   selectedWorkspaceId: 'ws-1',
   conversations: [
@@ -131,7 +131,7 @@ const mockWorkbench: WorkbenchSnapshot = {
   ],
   selectedConversationId: 'conv-1',
   deliverables: [
-    { relativePath: 'dist/Narwhal Forge.dmg', label: 'macOS build', pinnedAt: '2026-08-17T12:00:00Z' },
+    { relativePath: 'dist/Narwhal.dmg', label: 'macOS build', pinnedAt: '2026-08-17T12:00:00Z' },
     { relativePath: 'release/release-notes.md', label: 'Release notes', pinnedAt: '2026-08-18T07:00:00Z' },
   ],
   panelOpen: false,

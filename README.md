@@ -1,6 +1,6 @@
-# Narwhal Forge for macOS
+# Narwhal for macOS
 
-Narwhal Forge is a local-first personal AI coding workbench. It starts a compatible Harness runtime on loopback only and uses it strictly as a local Agent sidecar; the macOS app owns every visible conversation, activity, project and work-context surface.
+Narwhal is a local-first personal AI coding workbench. It starts a compatible Harness runtime on loopback only and uses it strictly as a local Agent sidecar; the macOS app owns every visible conversation, activity, project and work-context surface.
 
 ## Development
 
@@ -39,4 +39,4 @@ DSH_RUNTIME_SOURCE=/absolute/path/to/DeepSeek-Harness pnpm package:mac
 
 ## Attribution
 
-Narwhal Forge owns its desktop branding and does not use DeepSeek's visual identity. Its central Agent surface relies on a compatible DeepSeek Harness runtime; preserve the upstream license and notices for the staged runtime when distributing it.
+Narwhal owns its desktop branding and does not use DeepSeek's visual identity. Its central Agent surface relies on a compatible DeepSeek Harness runtime; preserve the upstream license and notices for the staged runtime when distributing it.

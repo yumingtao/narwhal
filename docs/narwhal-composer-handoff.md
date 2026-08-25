@@ -1,4 +1,4 @@
-# Narwhal Forge Composer Handoff
+# Narwhal Composer Handoff
 
 ## Scope
 

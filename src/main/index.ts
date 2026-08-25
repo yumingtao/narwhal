@@ -147,7 +147,9 @@ async function verifiedPathWithin(workspace: StoredWorkspace, candidate: string)
   return rel
 }
 function makeWindow(): BrowserWindow {
-  const browserWindow = new BrowserWindow({ width: 1440, height: 920, minWidth: 960, minHeight: 640, show: false, titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 13 }, backgroundColor: '#121416', webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, preload: fileURLToPath(new URL('../preload/index.cjs', import.meta.url)) } })
+  const iconPath = join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-icon.png')
+  const browserWindow = new BrowserWindow({ width: 1440, height: 920, minWidth: 960, minHeight: 640, show: false, titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 13 }, backgroundColor: '#121416', icon: nativeImage.createFromPath(iconPath), webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, preload: fileURLToPath(new URL('../preload/index.cjs', import.meta.url)) } })
+  if (process.platform === 'darwin') { try { app.dock?.setIcon(nativeImage.createFromPath(iconPath)) } catch { /* best-effort */ } }
   browserWindow.webContents.session.setPermissionRequestHandler((_w, _permission, callback) => callback(false)); browserWindow.webContents.session.setPermissionCheckHandler(() => false)
   browserWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   browserWindow.webContents.on('will-navigate', (event, url) => { if (url !== appUrl && url !== recoveryUrl) event.preventDefault() })
@@ -238,7 +240,7 @@ async function bootstrap(): Promise<void> {
   console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry)
   activeSupervisor = createHostSupervisor(() => spawn(app.isPackaged ? process.execPath : (process.env.DSH_NODE_EXECUTABLE ?? 'node'), [...selectedRuntime!.launchArguments, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
   hostBridge.subscribe((conversation) => { emitConversation(conversation); scheduleWorkbenchRefresh() })
-  registerIpc(); tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-tray.png')).resize({ width: 18, height: 18 })); tray.setToolTip('Narwhal Forge'); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show Narwhal Forge', click: () => windowRef?.show() }, { label: 'Quit', click: () => app.quit() }])); tray.on('click', () => windowRef?.show())
+  registerIpc(); tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-tray.png')).resize({ width: 18, height: 18 })); tray.setToolTip('Narwhal'); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show Narwhal', click: () => windowRef?.show() }, { label: 'Quit', click: () => app.quit() }])); tray.on('click', () => windowRef?.show())
   console.log('[narwhal] bootstrap: loading app URL:', appUrl)
   await loadApp();
   console.log('[narwhal] bootstrap: app loaded, starting host...')
