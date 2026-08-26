@@ -4,7 +4,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github-dark.css'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, ChatItem, Conversation, DesktopSettings, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ChatItem, Conversation, DesktopSettings, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
 import { classifyTrajectory } from '../shared/trajectory-classifier'
 import { buildTrajectoryData } from './trajectory/builder'
 import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar'
@@ -232,7 +232,7 @@ function App() {
       {!sidebarCollapsed && <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>}
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
-        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text) => agentCall(() => api.sendPrompt(text))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''}/>} 
+        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text, attachments) => agentCall(() => api.sendPrompt(text, attachments))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''}/>} 
         <footer className="statusbar">
           <div className="statusbar-context">
             <span className="statusbar-workspace" title={workspace?.displayPath ?? workspace?.name}><Icon name="folder"/>{workspace?.name ?? 'No workspace'}</span>
@@ -451,7 +451,7 @@ function SideBar({ workbench, sessions, selectedSessionId, choose, selectWorkspa
     </div>
   </>
 }
-function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel, workbench, selectWorkspace, chooseWorkspace, mode, setMode, conversationTitle, subagentsCount = 0 }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string) => void; cancel: () => void; workbench: WorkbenchSnapshot; selectWorkspace: (id: string) => void; chooseWorkspace: () => void; mode: AgentMode; setMode: (mode: AgentMode) => void; conversationTitle: string; subagentsCount?: number }) {
+function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel, workbench, selectWorkspace, chooseWorkspace, mode, setMode, conversationTitle, subagentsCount = 0 }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; workbench: WorkbenchSnapshot; selectWorkspace: (id: string) => void; chooseWorkspace: () => void; mode: AgentMode; setMode: (mode: AgentMode) => void; conversationTitle: string; subagentsCount?: number }) {
   const trajectoryData = useMemo(() => buildTrajectoryData(conversation.trajectory), [conversation.trajectory])
   const [duration, setDuration] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -671,17 +671,66 @@ function normalizeTrajectory(item: ChatItem) {
   }
 }
 function trajectoryPhases(_items: readonly ChatItem[]) { return [] }
-function TimelineItem({ item, trajectory }: { item: ChatItem; trajectory: boolean }) { if (trajectory || item.kind === 'trajectory' || item.kind === 'error') { const event = normalizeTrajectory(item); return <article className={`trajectory-row ${event.type}`}><span className="trajectory-mark"><Icon name={event.type}/></span><div><strong>{event.label}</strong><p>{event.text}</p></div></article> } return <article className={`message ${item.kind}`}><p className="message-label">{item.kind === 'user' ? 'You' : 'Narwhal Agent'}{item.streaming && <span className="streaming">Writing</span>}</p><div className="message-body"><MarkdownMessage content={item.text}/></div></article> }
-function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel, centered }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string) => void; cancel: () => void; centered?: boolean }) {
+function AttachmentList({ attachments }: { attachments: readonly Attachment[] }) {
+  if (!attachments.length) return null
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024 * 1024).toFixed(1)} MB`
+  }
+  return (
+    <div className="message-attachments">
+      {attachments.map((att) => (
+        <div key={att.id} className="attachment-item">
+          {att.type.startsWith('image/') && att.dataUrl ? (
+            <img src={att.dataUrl} alt={att.name} className="attachment-item-thumb" />
+          ) : (
+            <span className="attachment-item-icon">
+              <Icon name="file" size={16}/>
+            </span>
+          )}
+          <div className="attachment-item-info">
+            <span className="attachment-item-name" title={att.name}>{att.name}</span>
+            <span className="attachment-item-size">{formatSize(att.size)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+function TimelineItem({ item, trajectory }: { item: ChatItem; trajectory: boolean }) {
+  if (trajectory || item.kind === 'trajectory' || item.kind === 'error') {
+    const event = normalizeTrajectory(item)
+    return (
+      <article className={`trajectory-row ${event.type}`}>
+        <span className="trajectory-mark"><Icon name={event.type}/></span>
+        <div><strong>{event.label}</strong><p>{event.text}</p></div>
+      </article>
+    )
+  }
+  return (
+    <article className={`message ${item.kind}`}>
+      <p className="message-label">
+        {item.kind === 'user' ? 'You' : 'Narwhal Agent'}
+        {item.streaming && <span className="streaming">Writing</span>}
+      </p>
+      {item.attachments && item.attachments.length > 0 && <AttachmentList attachments={item.attachments} />}
+      <div className="message-body"><MarkdownMessage content={item.text}/></div>
+    </article>
+  )
+}
+function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel, centered }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; centered?: boolean }) {
   const [text, setText] = useState('')
   const [permMenuOpen, setPermMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const input = useRef<HTMLTextAreaElement>(null)
   const permissionTrigger = useRef<HTMLButtonElement>(null)
   const modelTrigger = useRef<HTMLButtonElement>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (running) { setText(''); input.current?.blur() }
+    if (running) { setText(''); setAttachments([]); input.current?.blur() }
   }, [running])
 
   useEffect(() => {
@@ -698,12 +747,51 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
     return () => document.removeEventListener('keydown', dismissOnEscape)
   }, [permMenuOpen, modelMenuOpen])
 
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files || files.length === 0) return
+
+    const newAttachments: Attachment[] = []
+    let remaining = files.length
+
+    Array.from(files).forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = (e) => {
+        newAttachments.push({
+          id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name: file.name,
+          size: file.size,
+          type: file.type || 'application/octet-stream',
+          dataUrl: e.target?.result as string | undefined,
+        })
+        remaining--
+        if (remaining === 0) {
+          setAttachments((prev) => [...prev, ...newAttachments])
+        }
+      }
+      reader.readAsDataURL(file)
+    })
+
+    event.target.value = ''
+  }
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id))
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024 * 1024).toFixed(1)} MB`
+  }
+
   const submit = (event: FormEvent) => {
     event.preventDefault()
     const message = text.trim()
-    if (!message || running) return
+    if ((!message && attachments.length === 0) || running) return
     setText('')
-    send(message)
+    send(message, attachments.length > 0 ? attachments : undefined)
+    setAttachments([])
   }
 
   const permissionValue = configuration.permissionOptions.some((option) => option.id === configuration.defaultPermission)
@@ -732,6 +820,40 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
 
   return (
     <form className={composerClass} onSubmit={submit}>
+      <input
+        ref={fileInput}
+        type="file"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleFileSelect}
+      />
+      {attachments.length > 0 && (
+        <div className="composer-attachments">
+          {attachments.map((att) => (
+            <div key={att.id} className="attachment-chip">
+              {att.type.startsWith('image/') && att.dataUrl ? (
+                <img src={att.dataUrl} alt={att.name} className="attachment-thumb" />
+              ) : (
+                <span className="attachment-icon">
+                  <Icon name="file" size={14}/>
+                </span>
+              )}
+              <div className="attachment-info">
+                <span className="attachment-name" title={att.name}>{att.name}</span>
+                <span className="attachment-size">{formatFileSize(att.size)}</span>
+              </div>
+              <button
+                type="button"
+                className="attachment-remove"
+                onClick={() => removeAttachment(att.id)}
+                aria-label={`Remove ${att.name}`}
+              >
+                <Icon name="close" size={12}/>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <textarea
         ref={input}
         value={text}
@@ -748,7 +870,14 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
       />
       <div className="composer-bottom-bar">
         <div className="composer-bar-left">
-          <button type="button" className="composer-add-btn" title="Add attachment" aria-label="Add attachment" disabled={running}>
+          <button
+            type="button"
+            className="composer-add-btn"
+            title="Add attachment"
+            aria-label="Add attachment"
+            disabled={running}
+            onClick={() => fileInput.current?.click()}
+          >
             <Icon name="plus" size={16}/>
           </button>
           {/* Permission selector pill */}
@@ -872,7 +1001,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
             <button
               type="submit"
               className="send"
-              disabled={!text.trim() || !hasSession}
+              disabled={(!text.trim() && attachments.length === 0) || !hasSession}
               aria-label="Send message"
             >
               <Icon name="arrow"/>

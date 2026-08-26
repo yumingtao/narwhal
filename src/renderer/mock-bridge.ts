@@ -2,6 +2,7 @@ import type {
   AgentConfiguration,
   AgentConversation,
   AgentSnapshot,
+  Attachment,
   Conversation,
   ConversationStatus,
   CreateProviderResult,
@@ -489,8 +490,10 @@ const _mockBridge = Object.freeze({
     return delay(conv)
   },
 
-  sendPrompt: async (text: string) => {
-    const msg = { id: `msg-${Date.now()}`, kind: 'user' as const, text, time: Date.now() }
+  sendPrompt: async (text: string, attachments?: readonly Attachment[]) => {
+    const hasAttachments = !!(attachments && attachments.length)
+    const displayText = text || (hasAttachments ? `Analyzing ${attachments!.length} attachment${attachments!.length !== 1 ? 's' : ''}` : '')
+    const msg = { id: `msg-${Date.now()}`, kind: 'user' as const, text: displayText, time: Date.now(), attachments: attachments ? [...attachments] : undefined }
     const conv: AgentConversation = {
       ...currentWorkbench.conversation,
       messages: [...currentWorkbench.conversation.messages, msg],
@@ -502,7 +505,11 @@ const _mockBridge = Object.freeze({
 
     // Simulate streaming response
     setTimeout(() => {
-      const reply = { id: `reply-${Date.now()}`, kind: 'assistant' as const, text: `Here's a mock response to: "${text}"\n\nThis is the browser debug preview with mock data.`, time: Date.now() }
+      const attachmentNote = hasAttachments
+        ? `\n\nI've received ${attachments!.length} attachment${attachments!.length !== 1 ? 's' : ''} (${attachments!.map(a => a.name).join(', ')}). `
+        : ''
+      const promptNote = text ? `"${text}"` : 'your request'
+      const reply = { id: `reply-${Date.now()}`, kind: 'assistant' as const, text: `Here's a mock response to ${promptNote}${attachmentNote}\n\nThis is the browser debug preview with mock data.`, time: Date.now() }
       const updated: AgentConversation = {
         ...currentWorkbench.conversation,
         messages: [...currentWorkbench.conversation.messages.filter((m) => m.id !== reply.id), reply],

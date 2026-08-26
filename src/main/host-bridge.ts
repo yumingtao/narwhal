@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
-import type { AgentConfiguration, AgentConversation, AgentSession, ChatItem, CreateProviderResult, CustomProviderCapability, ModelProvider, ProviderSetting, UsageStats } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSession, Attachment, ChatItem, CreateProviderResult, CustomProviderCapability, ModelProvider, ProviderSetting, UsageStats } from '../shared/desktop-contract.js'
 import { classifyTrajectory } from '../shared/trajectory-classifier.js'
 
 type JsonRecord = Record<string, unknown>
@@ -303,10 +303,17 @@ export class HostBridge {
     const entries = Array.isArray(value.events) ? value.events : []
     for (const entry of entries) if (isRecord(entry) && isRecord(entry.event)) this.ingestEvent(sessionId, entry.event)
   }
-  async prompt(text: string): Promise<AgentConversation> {
+  async prompt(text: string, attachments?: readonly Attachment[]): Promise<AgentConversation> {
     const sessionId = this.selectedSessionId; if (!sessionId) throw new Error('Choose a conversation first')
-    await this.rpc('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text }], clientTimeZone: 'Asia/Shanghai' })
-    const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text, time: Date.now() }
+    const hasAttachments = !!(attachments && attachments.length)
+    const attachmentNote = hasAttachments
+      ? `\n\n[Attached files: ${attachments!.map(a => `${a.name} (${a.type}, ${a.size} bytes)`).join('; ')}]`
+      : ''
+    const promptText = (text || 'Please analyze the attached file(s).') + attachmentNote
+    const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: promptText }]
+    await this.rpc('session.prompt', { sessionId, mode: 'queue', content, clientTimeZone: 'Asia/Shanghai' })
+    const displayText = text || (hasAttachments ? `Analyzing ${attachments!.length} attachment${attachments!.length !== 1 ? 's' : ''}` : '')
+    const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text: displayText, time: Date.now(), attachments: attachments ? [...attachments] : undefined }
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
     this.running = true; this.emit()
     for (const delay of [1_000, 3_000, 8_000]) setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, delay)

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, WorkbenchSnapshot } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, WorkbenchSnapshot } from '../shared/desktop-contract.js'
 
 const invoke = <T,>(channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload) as Promise<T>
 const bridge: NarwhalBridge = Object.freeze({
@@ -20,7 +20,10 @@ const bridge: NarwhalBridge = Object.freeze({
   listSessions: () => invoke<AgentConversation>('narwhal:list-sessions'),
   createSession: () => invoke<AgentConversation>('narwhal:create-session'),
   selectSession: (sessionId: string) => invoke<AgentConversation>('narwhal:select-session', { sessionId }),
-  sendPrompt: (text: string) => invoke<AgentConversation>('narwhal:send-prompt', { text }),
+  sendPrompt: (text: string, attachments?: readonly Attachment[]) => {
+    const meta = attachments ? attachments.map((a) => ({ id: a.id, name: a.name, size: a.size, type: a.type })) : undefined
+    return invoke<AgentConversation>('narwhal:send-prompt', { text, attachments: meta })
+  },
   cancelPrompt: () => invoke<void>('narwhal:cancel-prompt'),
   getAgentConfiguration: () => invoke<AgentConfiguration>('narwhal:get-agent-configuration'),
   selectAgentModel: (input: { provider: string; model: string; reasoningEffort?: string }) => invoke<AgentConfiguration>('narwhal:select-agent-model', input),

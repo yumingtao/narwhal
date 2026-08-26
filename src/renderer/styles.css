@@ -378,6 +378,81 @@ button { cursor: pointer; }
 }
 .composer-add-btn:hover { background: #2a3335; color: #c8d4d1; border-color: #4a5557; }
 .composer-add-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Composer — attachment preview chips */
+.composer-attachments {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-bottom: 8px; padding: 8px;
+  background: #1a2224; border: 1px solid #2c3436; border-radius: 8px;
+}
+.attachment-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px 4px 4px; border-radius: 6px;
+  background: #222a2c; border: 1px solid #394244;
+  max-width: 280px;
+}
+.attachment-chip .attachment-thumb {
+  width: 28px; height: 28px; border-radius: 4px;
+  object-fit: cover; flex-shrink: 0;
+}
+.attachment-chip .attachment-icon {
+  display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 4px;
+  background: #2c3436; color: #8a9591; flex-shrink: 0;
+}
+.attachment-chip .attachment-info {
+  display: flex; flex-direction: column; min-width: 0; flex: 1;
+}
+.attachment-chip .attachment-name {
+  font-size: 11px; color: #e0e6e3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 180px;
+}
+.attachment-chip .attachment-size {
+  font-size: 10px; color: #77827f;
+}
+.attachment-chip .attachment-remove {
+  display: grid; place-items: center;
+  width: 20px; height: 20px; padding: 0;
+  border: 0; border-radius: 4px;
+  background: transparent; color: #77827f; cursor: pointer;
+  flex-shrink: 0; transition: color .12s, background .12s;
+}
+.attachment-chip .attachment-remove:hover {
+  background: #3a2222; color: #e0a0a0;
+}
+
+/* Message — attachment display */
+.message-attachments {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 6px 0;
+}
+.attachment-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px; border-radius: 8px;
+  background: #1a2224; border: 1px solid #2c3436;
+  max-width: 360px;
+}
+.attachment-item .attachment-item-thumb {
+  width: 40px; height: 40px; border-radius: 6px;
+  object-fit: cover; flex-shrink: 0;
+}
+.attachment-item .attachment-item-icon {
+  display: grid; place-items: center;
+  width: 40px; height: 40px; border-radius: 6px;
+  background: #2c3436; color: #8a9591; flex-shrink: 0;
+}
+.attachment-item .attachment-item-info {
+  display: flex; flex-direction: column; min-width: 0; flex: 1;
+}
+.attachment-item .attachment-item-name {
+  font-size: 12px; color: #e0e6e3;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.attachment-item .attachment-item-size {
+  font-size: 11px; color: #77827f;
+}
+
 .composer-permission-pill, .composer-model-pill {
   height: 26px; padding: 0 10px; font-size: 12px; gap: 5px;
   background: #222a2c; border-color: #394244;
