@@ -4,7 +4,7 @@
 
 ## 发布前必须由产品所有者提供
 
-1. 最终应用名称、`appId`（替换当前 `com.example.narwhalforge` 开发占位符）和开发者/公司名称。
+1. 最终应用名称、`appId`（替换当前 `com.example.narwhal` 开发占位符）和开发者/公司名称。
 2. Apple Developer Program Team ID。
 3. `Developer ID Application` 证书及其私钥，安装在构建机钥匙串。
 4. 用于 notarization 的 App Store Connect API key，或专用 Apple ID app password。
@@ -29,4 +29,4 @@ pnpm package:mac
 - 使用 `Developer ID Application` 对 `.app` 内所有可执行文件和原生模块进行 hardened-runtime 签名。
 - 对 DMG/ZIP 做 notarization 并在发布前执行 stapling。
 - 使用 `codesign --verify --deep --strict` 与 `spctl --assess --type execute --verbose` 验证最终 `.app`。
-- 不要把当前 `com.example.narwhalforge`、默认 Electron 图标或未签名产物作为公开发布身份。
+- 不要把当前 `com.example.narwhal`、默认 Electron 图标或未签名产物作为公开发布身份。

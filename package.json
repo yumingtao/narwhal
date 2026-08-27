@@ -2,7 +2,7 @@
   "name": "narwhal",
   "version": "0.1.0",
   "private": true,
-  "description": "Narwhal, a local-first personal AI coding workbench for macOS.",
+  "description": "Narwhal, a local-first personal AI coding workbench for desktop.",
   "type": "module",
   "main": "dist/main/index.js",
   "scripts": {
