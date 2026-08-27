@@ -10,3 +10,4 @@ const copy = async (from, to) => {
 await copy(resolve(root, 'src/recovery/index.html'), resolve(root, 'dist/recovery/index.html'))
 await copy(resolve(root, 'assets/narwhal-icon.png'), resolve(root, 'dist/renderer/assets/narwhal-icon.png'))
 await copy(resolve(root, 'assets/narwhal-tray.png'), resolve(root, 'dist/renderer/assets/narwhal-tray.png'))
+await copy(resolve(root, 'assets/narwhal-dock.png'), resolve(root, 'dist/renderer/assets/narwhal-dock.png'))

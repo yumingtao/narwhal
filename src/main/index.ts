@@ -153,9 +153,9 @@ async function verifiedPathWithin(workspace: StoredWorkspace, candidate: string)
   return rel
 }
 function makeWindow(): BrowserWindow {
-  const iconPath = join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-icon.png')
-  const browserWindow = new BrowserWindow({ width: 1440, height: 920, minWidth: 960, minHeight: 640, show: false, titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 13 }, backgroundColor: '#121416', icon: nativeImage.createFromPath(iconPath), webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, preload: fileURLToPath(new URL('../preload/index.cjs', import.meta.url)) } })
-  if (process.platform === 'darwin') { try { app.dock?.setIcon(nativeImage.createFromPath(iconPath)) } catch { /* best-effort */ } }
+  const dockIconPath = join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-dock.png')
+  const browserWindow = new BrowserWindow({ width: 1440, height: 920, minWidth: 960, minHeight: 640, show: false, titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 13 }, backgroundColor: '#121416', icon: nativeImage.createFromPath(dockIconPath), webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true, preload: fileURLToPath(new URL('../preload/index.cjs', import.meta.url)) } })
+  if (process.platform === 'darwin') { try { app.dock?.setIcon(nativeImage.createFromPath(dockIconPath)) } catch { /* best-effort */ } }
   browserWindow.webContents.session.setPermissionRequestHandler((_w, _permission, callback) => callback(false)); browserWindow.webContents.session.setPermissionCheckHandler(() => false)
   browserWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   browserWindow.webContents.on('will-navigate', (event, url) => { if (url !== appUrl && url !== recoveryUrl) event.preventDefault() })
