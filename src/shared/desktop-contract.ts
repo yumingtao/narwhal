@@ -14,9 +14,9 @@ export interface WorkbenchSnapshot { readonly workspaces: readonly Workspace[]; 
 export interface AgentSnapshot { readonly state: AgentState; readonly origin?: string }
 export interface DesktopSettings { readonly appVersion: string; readonly runtimeVersion: string; readonly dataDirectory: string }
 export interface ModelEffort { readonly id: string; readonly name: string; readonly description?: string }
-export interface AgentModel { readonly id: string; readonly name: string; readonly description?: string; readonly efforts: readonly ModelEffort[]; readonly defaultEffort?: string }
+export interface AgentModel { readonly id: string; readonly name: string; readonly description?: string; readonly efforts: readonly ModelEffort[]; readonly defaultEffort?: string; readonly effortsNative?: boolean }
 export interface ModelProvider { readonly id: string; readonly name: string; readonly models: readonly AgentModel[] }
-export interface ProviderSetting { readonly id: string; readonly name: string; readonly active: boolean; readonly apiKeyConfigured: boolean; readonly apiKeyWritable: boolean; readonly baseUrl?: string }
+export interface ProviderSetting { readonly id: string; readonly name: string; readonly active: boolean; readonly apiKeyConfigured: boolean; readonly apiKeyWritable: boolean; readonly baseUrl?: string; readonly protocol?: string }
 export interface CustomProviderCapability { readonly available: boolean; readonly protocols: readonly string[]; readonly reason?: string }
 export interface AgentConfiguration { readonly available: boolean; readonly writable: boolean; readonly providers: readonly ProviderSetting[]; readonly models: readonly ModelProvider[]; readonly defaultPermission?: string; readonly permissionOptions: readonly { readonly id: string; readonly label: string }[]; readonly customProvider: CustomProviderCapability; readonly selectedModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }; readonly error?: string }
 export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean }

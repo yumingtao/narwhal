@@ -206,17 +206,17 @@ const mockConfig: AgentConfiguration = {
   available: true,
   writable: true,
   providers: [
-    { id: 'deepseek', name: 'DeepSeek', active: true, apiKeyConfigured: true, apiKeyWritable: true },
-    { id: 'anthropic', name: 'Anthropic', active: true, apiKeyConfigured: true, apiKeyWritable: true },
-    { id: 'openai', name: 'OpenAI', active: false, apiKeyConfigured: false, apiKeyWritable: true },
+    { id: 'deepseek', name: 'DeepSeek', active: true, apiKeyConfigured: true, apiKeyWritable: true, protocol: 'deepseek' },
+    { id: 'anthropic', name: 'Anthropic', active: true, apiKeyConfigured: true, apiKeyWritable: true, protocol: 'anthropic' },
+    { id: 'openai', name: 'OpenAI', active: false, apiKeyConfigured: false, apiKeyWritable: true, protocol: 'openai' },
   ],
   models: [
     {
       id: 'deepseek',
       name: 'DeepSeek',
       models: [
-        { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }], defaultEffort: 'high' },
-        { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }], defaultEffort: 'high' },
+        { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }], defaultEffort: 'high', effortsNative: true },
+        { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', efforts: [{ id: 'off', name: 'Off' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }], defaultEffort: 'high', effortsNative: true },
       ],
     },
     {
@@ -233,8 +233,8 @@ const mockConfig: AgentConfiguration = {
       models: [
         { id: 'gpt-4o', name: 'GPT-4o', efforts: [], defaultEffort: undefined },
         { id: 'gpt-4o-mini', name: 'GPT-4o Mini', efforts: [], defaultEffort: undefined },
-        { id: 'o3', name: 'o3', efforts: [], defaultEffort: undefined },
-        { id: 'o4-mini', name: 'o4-mini', efforts: [], defaultEffort: undefined },
+        { id: 'o3', name: 'o3', efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }], defaultEffort: 'medium', effortsNative: true },
+        { id: 'o4-mini', name: 'o4-mini', efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }], defaultEffort: 'medium', effortsNative: true },
       ],
     },
   ],
@@ -622,6 +622,7 @@ const _mockBridge = Object.freeze({
   },
 
   createProvider: async (input: { readonly id: string; readonly displayName?: string; readonly baseUrl: string; readonly protocol: string; readonly modelIds: readonly string[]; readonly apiKey?: string }) => {
+    const protocol = input.protocol.includes('openai') ? 'openai' : input.protocol.includes('anthropic') ? 'anthropic' : input.protocol
     const newProvider = {
       id: input.id,
       name: input.displayName ?? input.id,
@@ -629,12 +630,15 @@ const _mockBridge = Object.freeze({
       apiKeyConfigured: !!input.apiKey,
       apiKeyWritable: true,
       baseUrl: input.baseUrl,
+      protocol,
     }
+    const openaiEfforts = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
     const models = input.modelIds.map((modelId) => ({
       id: modelId,
       name: modelId,
-      efforts: [] as Array<{ id: string; name: string }>,
-      defaultEffort: undefined as string | undefined,
+      efforts: protocol === 'openai' ? openaiEfforts : [] as Array<{ id: string; name: string }>,
+      defaultEffort: protocol === 'openai' ? 'medium' as string | undefined : undefined as string | undefined,
+      effortsNative: false,
     }))
     const newModelGroup = {
       id: input.id,

@@ -351,15 +351,40 @@ export class HostBridge {
         const settings = id && ns ? namespaces.find((entry) => entry.ns === ns) : undefined; const profile = settings && isRecord(settings.value) ? valueAt(settings.value, path) : undefined
         if (!id || !name || !isRecord(profile)) return []
         const reference = credentialRefFor(id, profile); const credential = reference && isRecord(credentialMap[reference]) ? credentialMap[reference] : undefined
-        return [{ id, name, active: provider.active === true, apiKeyConfigured: credential?.configured === true, apiKeyWritable: credential?.writable === true, baseUrl: string(profile.baseURL, 600) ?? string(profile.baseUrl, 600) }]
+        return [{ id, name, active: provider.active === true, apiKeyConfigured: credential?.configured === true, apiKeyWritable: credential?.writable === true, baseUrl: string(profile.baseURL, 600) ?? string(profile.baseUrl, 600), protocol: string(profile.api, 80) }]
       })
+      const OPENAI_COMPAT_EFFORTS = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
+      function detectProtocol(protocol: string | undefined, providerId: string, baseUrl: string | undefined, modelIds: string[]): string {
+        if (protocol) return protocol
+        const lowerId = providerId.toLowerCase()
+        if (lowerId.includes('deepseek')) return 'deepseek'
+        if (lowerId.includes('anthropic') || lowerId.includes('claude')) return 'anthropic'
+        const url = (baseUrl ?? '').toLowerCase()
+        if (url.includes('openai') || url.includes('deepseek')) return 'openai'
+        if (url.includes('anthropic') || url.includes('claude')) return 'anthropic'
+        const hasOpenAIPattern = modelIds.some((m) => /^(gpt|o[1-9]|sora)-/.test(m.toLowerCase()))
+        if (hasOpenAIPattern) return 'openai'
+        const hasAnthropicPattern = modelIds.some((m) => /^claude-/.test(m.toLowerCase()))
+        if (hasAnthropicPattern) return 'anthropic'
+        return ''
+      }
+      const providerInfoMap = new Map<string, { protocol: string, baseUrl: string | undefined }>()
+      for (const p of normalizedProviders) { providerInfoMap.set(p.id, { protocol: p.protocol ?? '', baseUrl: p.baseUrl }) }
       const models: ModelProvider[] = (Array.isArray(modelsValue.groups) ? modelsValue.groups : []).flatMap((group) => {
         if (!isRecord(group)) return []; const id = validId(group.id); const name = string(group.name, 120); const modelRows = Array.isArray(group.models) ? group.models : []
         if (!id || !name) return []
+        const info = providerInfoMap.get(id) ?? { protocol: '', baseUrl: undefined }
+        const modelIds = modelRows.flatMap((m) => { if (!isRecord(m)) return []; const mid = string(m.id, 160); return mid ? [mid] : [] })
+        const protocol = detectProtocol(info.protocol, id, info.baseUrl, modelIds)
         return [{ id, name, models: modelRows.flatMap((model) => {
           if (!isRecord(model)) return []; const modelId = string(model.id, 160); const modelName = string(model.name, 160); if (!modelId || !modelName) return []
-          const reasoning = isRecord(model.reasoning) ? model.reasoning : {}; const efforts = Array.isArray(reasoning.efforts) ? reasoning.efforts.flatMap((effort) => isRecord(effort) && string(effort.id, 100) && string(effort.name, 100) ? [{ id: string(effort.id, 100)!, name: string(effort.name, 100)!, description: string(effort.description, 300) }] : []) : []
-          return [{ id: modelId, name: modelName, description: string(model.description, 300), efforts, defaultEffort: string(reasoning.defaultEffort, 100) }]
+          const reasoning = isRecord(model.reasoning) ? model.reasoning : {}
+          const rawEfforts = Array.isArray(reasoning.efforts) ? reasoning.efforts.flatMap((effort) => isRecord(effort) && string(effort.id, 100) && string(effort.name, 100) ? [{ id: string(effort.id, 100)!, name: string(effort.name, 100)!, description: string(effort.description, 300) }] : []) : []
+          const isOpenAI = protocol.includes('openai')
+          const useFallbackEfforts = rawEfforts.length === 0 && isOpenAI
+          const efforts = useFallbackEfforts ? OPENAI_COMPAT_EFFORTS : rawEfforts
+          const defaultEffort = string(reasoning.defaultEffort, 100) ?? (useFallbackEfforts ? 'medium' : undefined)
+          return [{ id: modelId, name: modelName, description: string(model.description, 300), efforts, defaultEffort, effortsNative: !useFallbackEfforts }]
         }) }]
       })
       const permission = namespaces.find((entry) => entry.ns === 'permission'); const permissionValue = permission && isRecord(permission.value) ? permission.value : {}; const current = isRecord(sessionModels.current) ? sessionModels.current : undefined

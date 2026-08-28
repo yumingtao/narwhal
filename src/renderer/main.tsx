@@ -723,10 +723,13 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const [text, setText] = useState('')
   const [permMenuOpen, setPermMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [effortMenuOpen, setEffortMenuOpen] = useState(false)
+  const [fallbackEffort, setFallbackEffort] = useState<string | undefined>(undefined)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const input = useRef<HTMLTextAreaElement>(null)
   const permissionTrigger = useRef<HTMLButtonElement>(null)
   const modelTrigger = useRef<HTMLButtonElement>(null)
+  const effortTrigger = useRef<HTMLButtonElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -734,18 +737,17 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   }, [running])
 
   useEffect(() => {
-    if (!permMenuOpen && !modelMenuOpen) return
+    if (!permMenuOpen && !modelMenuOpen && !effortMenuOpen) return
     const dismissOnEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
       event.preventDefault()
-      const trigger = permMenuOpen ? permissionTrigger.current : modelTrigger.current
-      setPermMenuOpen(false)
-      setModelMenuOpen(false)
-      requestAnimationFrame(() => trigger?.focus())
+      if (effortMenuOpen) { setEffortMenuOpen(false); requestAnimationFrame(() => effortTrigger.current?.focus()) }
+      else if (modelMenuOpen) { setModelMenuOpen(false); requestAnimationFrame(() => modelTrigger.current?.focus()) }
+      else { setPermMenuOpen(false); requestAnimationFrame(() => permissionTrigger.current?.focus()) }
     }
     document.addEventListener('keydown', dismissOnEscape)
     return () => document.removeEventListener('keydown', dismissOnEscape)
-  }, [permMenuOpen, modelMenuOpen])
+  }, [permMenuOpen, modelMenuOpen, effortMenuOpen])
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
@@ -805,13 +807,21 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const selected = configuration.selectedModel
   const provider = groups.find((item) => item.id === selected?.provider) ?? groups.find((item) => item.models.length > 0)
   const model = provider?.models.find((item) => item.id === selected?.model) ?? provider?.models[0]
-  const effort = model?.efforts.some((item) => item.id === selected?.reasoningEffort)
-    ? selected?.reasoningEffort ?? ''
-    : model?.defaultEffort ?? model?.efforts[0]?.id ?? ''
+  const isFallbackEfforts = !!model && !model.effortsNative
+  const effort = isFallbackEfforts
+    ? (fallbackEffort ?? model?.defaultEffort ?? model?.efforts[0]?.id ?? '')
+    : (model?.efforts.some((item) => item.id === selected?.reasoningEffort)
+      ? selected?.reasoningEffort ?? ''
+      : model?.defaultEffort ?? model?.efforts[0]?.id ?? '')
   const currentEffort = model?.efforts.find((e) => e.id === effort)
 
   const handleModelSelect = (providerId: string, modelId: string, modelEffort?: string) => {
-    void selectModel({ provider: providerId, model: modelId, ...(modelEffort && { reasoningEffort: modelEffort }) })
+    const selectedGroup = groups.find((g) => g.id === providerId)
+    const selectedModelData = selectedGroup?.models.find((m) => m.id === modelId)
+    const supportsEfforts = !!selectedModelData?.effortsNative
+    void selectModel({ provider: providerId, model: modelId, ...(supportsEfforts && modelEffort ? { reasoningEffort: modelEffort } : {}) })
+    // Reset fallback effort state when switching models
+    setFallbackEffort(undefined)
     setModelMenuOpen(false)
   }
   
@@ -934,10 +944,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                 aria-expanded={modelMenuOpen}
                 aria-controls="composer-model-menu"
               >
-                <span className="selector-pill-label">
-                  {model.name}
-                  {currentEffort && <span className="composer-effort-label"> · {currentEffort.name}</span>}
-                </span>
+                <span className="selector-pill-label">{model.name}</span>
                 <Icon name="chevron" size={10}/>
               </button>
               {modelMenuOpen && (
@@ -952,34 +959,17 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                             const isActive = group.id === provider?.id && m.id === model?.id
                             const defaultEffort = m.defaultEffort ?? m.efforts[0]?.id
                             return (
-                              <div key={`${group.id}-${m.id}`}>
+                              <div key={`${group.id}-${m.id}`} className="model-entry">
                                 <button
                                   type="button"
                                   role="menuitemradio"
-                                  aria-checked={isActive && defaultEffort === effort}
+                                  aria-checked={isActive}
                                   className={`menu-item model-menu-item ${isActive ? 'active' : ''}`}
                                   onClick={() => handleModelSelect(group.id, m.id, defaultEffort)}
                                 >
                                   <span className="selector-item-label">{m.name}</span>
                                   {isActive && <span className="menu-check">✓</span>}
                                 </button>
-                                {isActive && m.efforts.length > 1 && (
-                                  <div className="effort-submenu">
-                                    {m.efforts.map((eff) => (
-                                      <button
-                                        type="button"
-                                        role="menuitemradio"
-                                        aria-checked={eff.id === currentEffort?.id}
-                                        key={eff.id}
-                                        className={`menu-item effort-menu-item ${eff.id === currentEffort?.id ? 'active' : ''}`}
-                                        onClick={() => handleModelSelect(group.id, m.id, eff.id)}
-                                      >
-                                        <span className="selector-item-label">{eff.name}</span>
-                                        {eff.id === currentEffort?.id && <span className="menu-check">✓</span>}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
                               </div>
                             )
                           })}
@@ -993,6 +983,55 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
           ) : configuration.available ? (
             <span className="composer-model-empty">Model unavailable</span>
           ) : null}
+          {/* Effort selector pill - shown when model has multiple efforts (native or fallback) */}
+          {configuration.available && model && model.efforts.length > 1 && (
+            <div className="selector-pill-wrapper">
+              <button
+                ref={effortTrigger}
+                type="button"
+                className="selector-pill composer-effort-pill"
+                disabled={modelPickerDisabled}
+                onClick={() => { setEffortMenuOpen(!effortMenuOpen); setModelMenuOpen(false); setPermMenuOpen(false) }}
+                title="Adjust reasoning effort"
+                aria-haspopup="menu"
+                aria-expanded={effortMenuOpen}
+                aria-controls="composer-effort-menu"
+              >
+                <span className="selector-pill-label">{currentEffort?.name ?? effort}</span>
+                <Icon name="chevron" size={10}/>
+              </button>
+              {effortMenuOpen && (
+                <>
+                  <div className="menu-overlay" onClick={() => setEffortMenuOpen(false)}/>
+                  <div id="composer-effort-menu" className="menu-popup selector-menu" role="menu" aria-label="Reasoning effort" onClick={(e) => e.stopPropagation()}>
+                    <div className="menu-section">
+                      {model.efforts.map((eff) => (
+                        <button
+                          type="button"
+                          key={eff.id}
+                          role="menuitemradio"
+                          aria-checked={eff.id === effort}
+                          className={`menu-item ${eff.id === effort ? 'active' : ''}`}
+                          onClick={() => {
+                            if (isFallbackEfforts) {
+                              setFallbackEffort(eff.id)
+                              setEffortMenuOpen(false)
+                            } else {
+                              void selectModel({ provider: provider?.id ?? '', model: model.id, reasoningEffort: eff.id })
+                              setEffortMenuOpen(false)
+                            }
+                          }}
+                        >
+                          <span className="selector-item-label">{eff.name}</span>
+                          {eff.id === effort && <span className="menu-check">✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
         <div className="composer-bar-right">
           {running ? (
