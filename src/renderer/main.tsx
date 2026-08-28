@@ -818,8 +818,8 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const handleModelSelect = (providerId: string, modelId: string, modelEffort?: string) => {
     const selectedGroup = groups.find((g) => g.id === providerId)
     const selectedModelData = selectedGroup?.models.find((m) => m.id === modelId)
-    const supportsEfforts = !!selectedModelData?.effortsNative
-    void selectModel({ provider: providerId, model: modelId, ...(supportsEfforts && modelEffort ? { reasoningEffort: modelEffort } : {}) })
+    const supportsNativeEfforts = !!selectedModelData?.effortsNative
+    void selectModel({ provider: providerId, model: modelId, ...(supportsNativeEfforts && modelEffort ? { reasoningEffort: modelEffort } : {}) })
     // Reset fallback effort state when switching models
     setFallbackEffort(undefined)
     setModelMenuOpen(false)

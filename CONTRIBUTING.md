@@ -37,7 +37,7 @@ Enhancement suggestions are tracked as GitHub issues. When suggesting an enhance
 3. **Write meaningful commit messages**
 4. **Include comments** in your code where necessary
 5. **Update the README** if needed
-6. **Ensure the test suite passes**
+6. **Ensure `pnpm typecheck` and `pnpm build` pass**
 7. **Create a pull request** to `main`
 
 ## Development Setup

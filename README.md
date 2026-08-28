@@ -111,6 +111,7 @@ Narwhal follows a strict security boundary between the renderer (UI) and the run
 
 - Node.js 22+
 - pnpm
+- A local [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) checkout for development mode
 
 ```sh
 # Install dependencies
@@ -120,7 +121,7 @@ pnpm install
 pnpm dev
 ```
 
-Set `DSH_RUNTIME_ROOT` to use a custom Harness checkout, or `DSH_NODE_EXECUTABLE` when the appropriate Node binary is not on `PATH`.
+Development mode (`pnpm dev`) expects a DeepSeek Harness checkout adjacent to this repo at `../DeepSeek-Harness` by default. Without it, the local Agent runtime cannot start. To point elsewhere, set `DSH_RUNTIME_ROOT`. Set `DSH_NODE_EXECUTABLE` when the appropriate Node binary is not on `PATH`.
 
 ## Development
 
@@ -169,6 +170,8 @@ narwhal/
 ├── docs/                # Documentation
 └── build/               # Icons and build assets
 ```
+
+> `runtime/dsh/package.json` is a generated staging manifest produced by `pnpm stage:runtime`. It pins `@deepseek-ai/dsh-*` workspace packages from a local Harness checkout and is only resolvable inside that upstream workspace. Do not edit it by hand or run `pnpm install` against it directly.
 
 ## Relationship to DeepSeek Harness
 

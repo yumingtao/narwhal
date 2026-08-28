@@ -223,8 +223,8 @@ const mockConfig: AgentConfiguration = {
       id: 'anthropic',
       name: 'Anthropic',
       models: [
-        { id: 'claude-4.5-sonnet', name: 'Claude 4.5 Sonnet', efforts: [], defaultEffort: undefined },
-        { id: 'claude-4-opus', name: 'Claude 4 Opus', efforts: [], defaultEffort: undefined },
+        { id: 'claude-4.5-sonnet', name: 'Claude 4.5 Sonnet', efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }], defaultEffort: 'medium', effortsNative: false },
+        { id: 'claude-4-opus', name: 'Claude 4 Opus', efforts: [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }], defaultEffort: 'medium', effortsNative: false },
       ],
     },
     {
@@ -633,11 +633,12 @@ const _mockBridge = Object.freeze({
       protocol,
     }
     const openaiEfforts = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
+    const supportsFallbackEfforts = protocol === 'openai' || protocol === 'anthropic'
     const models = input.modelIds.map((modelId) => ({
       id: modelId,
       name: modelId,
-      efforts: protocol === 'openai' ? openaiEfforts : [] as Array<{ id: string; name: string }>,
-      defaultEffort: protocol === 'openai' ? 'medium' as string | undefined : undefined as string | undefined,
+      efforts: supportsFallbackEfforts ? openaiEfforts : [] as Array<{ id: string; name: string }>,
+      defaultEffort: supportsFallbackEfforts ? 'medium' as string | undefined : undefined as string | undefined,
       effortsNative: false,
     }))
     const newModelGroup = {

@@ -311,7 +311,8 @@ export class HostBridge {
       : ''
     const promptText = (text || 'Please analyze the attached file(s).') + attachmentNote
     const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: promptText }]
-    await this.rpc('session.prompt', { sessionId, mode: 'queue', content, clientTimeZone: 'Asia/Shanghai' })
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    await this.rpc('session.prompt', { sessionId, mode: 'queue', content, clientTimeZone: timeZone })
     const displayText = text || (hasAttachments ? `Analyzing ${attachments!.length} attachment${attachments!.length !== 1 ? 's' : ''}` : '')
     const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text: displayText, time: Date.now(), attachments: attachments ? [...attachments] : undefined }
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
@@ -381,7 +382,8 @@ export class HostBridge {
           const reasoning = isRecord(model.reasoning) ? model.reasoning : {}
           const rawEfforts = Array.isArray(reasoning.efforts) ? reasoning.efforts.flatMap((effort) => isRecord(effort) && string(effort.id, 100) && string(effort.name, 100) ? [{ id: string(effort.id, 100)!, name: string(effort.name, 100)!, description: string(effort.description, 300) }] : []) : []
           const isOpenAI = protocol.includes('openai')
-          const useFallbackEfforts = rawEfforts.length === 0 && isOpenAI
+          const isAnthropic = protocol.includes('anthropic')
+          const useFallbackEfforts = rawEfforts.length === 0 && (isOpenAI || isAnthropic)
           const efforts = useFallbackEfforts ? OPENAI_COMPAT_EFFORTS : rawEfforts
           const defaultEffort = string(reasoning.defaultEffort, 100) ?? (useFallbackEfforts ? 'medium' : undefined)
           return [{ id: modelId, name: modelName, description: string(model.description, 300), efforts, defaultEffort, effortsNative: !useFallbackEfforts }]

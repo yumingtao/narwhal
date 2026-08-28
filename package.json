@@ -5,6 +5,9 @@
   "description": "Narwhal, a local-first personal AI coding workbench for desktop.",
   "type": "module",
   "main": "dist/main/index.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "vite build && tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -16,16 +19,16 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
     "@types/ws": "^8.18.1",
-    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-react": "^6.0.5",
     "electron": "43.4.0",
     "electron-builder": "26.15.3",
-    "react": "latest",
-    "react-dom": "latest",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "^6.0.3",
-    "vite": "latest"
+    "vite": "^8.2.1"
   },
   "pnpm": {
     "ignoredBuiltDependencies": [
@@ -33,7 +36,7 @@
     ]
   },
   "build": {
-    "appId": "com.example.narwhal",
+    "appId": "com.narwhal.app",
     "productName": "Narwhal",
     "icon": "build/icon.icns",
     "asar": true,
