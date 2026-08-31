@@ -8,8 +8,23 @@ import type {
   CreateProviderResult,
   DesktopSettings,
   NarwhalBridge,
+  NarwhalConfig,
   WorkbenchSnapshot,
 } from '../shared/desktop-contract.js'
+
+const mockNarwhalConfig: NarwhalConfig = {
+  version: 1,
+  theme: 'auto',
+  defaultModel: 'deepseek-chat',
+  defaultEffort: 'medium',
+  agentMode: 'minimal',
+  permissionLevel: 'default',
+  providers: {
+    deepseek: { enabled: true, options: { apiKey: '{env:DEEPSEEK_API_KEY}' } },
+    anthropic: { enabled: true, options: { apiKey: '{env:ANTHROPIC_API_KEY}' } },
+    openai: { enabled: true, options: { apiKey: '{env:OPENAI_API_KEY}' } },
+  },
+}
 
 const mockAgent: AgentSnapshot = { state: 'ready', origin: 'http://127.0.0.1:18789' }
 
@@ -278,7 +293,7 @@ const _mockBridge = Object.freeze({
       setTimeout(emitConversation, 200)
       setTimeout(emitWorkbench, 250)
     }
-    return delay({ agent: mockAgent, workbench: currentWorkbench, settings: mockSettings }, 300)
+    return delay({ agent: mockAgent, workbench: currentWorkbench, settings: mockSettings, config: mockNarwhalConfig }, 300)
   },
 
   chooseWorkspace: async () => {
@@ -658,6 +673,10 @@ const _mockBridge = Object.freeze({
     setTimeout(emitAgent, 200)
     return delay(undefined)
   },
+
+  getConfig: async () => delay(mockNarwhalConfig),
+  saveConfig: async (patch: Partial<NarwhalConfig>) => delay({ ...mockNarwhalConfig, ...patch } as NarwhalConfig),
+  getConfigPath: async () => delay('~/.config/narwhal/config.json'),
 
   onAgentState: (listener: (state: AgentSnapshot) => void) => {
     listeners.agent.add(listener)

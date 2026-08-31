@@ -4,7 +4,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github-dark.css'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ChatItem, Conversation, DesktopSettings, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ChatItem, Conversation, DesktopSettings, NarwhalConfig, ThemeMode, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
 import { classifyTrajectory } from '../shared/trajectory-classifier'
 import { buildTrajectoryData } from './trajectory/builder'
 import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar'
@@ -131,6 +131,11 @@ function App() {
     const stored = localStorage.getItem(PANEL_WIDTH_KEY)
     return stored ? Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, parseInt(stored, 10))) : DEFAULT_PANEL_WIDTH
   })
+  const [config, setConfig] = useState<NarwhalConfig | null>(null)
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    const stored = localStorage.getItem('narwhal:theme') as ThemeMode | null
+    return stored ?? 'auto'
+  })
   const selectedConversation = useMemo(() => workbench.conversations.find((conv) => conv.id === workbench.selectedConversationId) ?? workbench.conversations[0], [workbench])
   const workspace = workbench.workspaces.find((item) => item.id === workbench.selectedWorkspaceId)
   const mutate = async (operation: () => Promise<WorkbenchSnapshot>) => { try { setError(''); const next = await operation(); setWorkbench(next); setConversation(next.conversation) } catch { setError('We couldn’t complete that action. Your local files were not changed.') } }
@@ -164,7 +169,13 @@ function App() {
     }
   }
   useEffect(() => {
-    void api.bootstrap().then(({ agent, workbench, settings }) => { setAgent(agent); setSettings(settings); setWorkbench(workbench); setConversation(workbench.conversation) }).catch(() => setError('Narwhal could not load its local workspace data.'))
+    void api.bootstrap().then(({ agent, workbench, settings, config: bootstrapConfig }) => {
+      setAgent(agent); setSettings(settings); setWorkbench(workbench); setConversation(workbench.conversation)
+      if (bootstrapConfig) {
+        setConfig(bootstrapConfig)
+        setTheme(bootstrapConfig.theme)
+      }
+    }).catch(() => setError('Narwhal could not load its local workspace data.'))
     const unAgent = api.onAgentState(setAgent); const unConversation = api.onConversation(setConversation)
     const unWorkbench = api.onWorkbench((next) => { setWorkbench(next); setConversation(next.conversation) })
     return () => { unAgent(); unConversation(); unWorkbench() }
@@ -177,6 +188,24 @@ function App() {
   useEffect(() => { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)) }, [sidebarWidth])
   useEffect(() => { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed)) }, [sidebarCollapsed])
   useEffect(() => { localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)) }, [panelWidth])
+  // Apply theme to document element
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    localStorage.setItem('narwhal:theme', theme)
+  }, [theme])
+  // Listen to system preference changes when theme is "auto"
+  useEffect(() => {
+    if (theme !== 'auto') return
+    const mql = window.matchMedia('(prefers-color-scheme: light)')
+    const onChange = () => { /* CSS media query handles auto; no JS action needed */ }
+    mql.addEventListener?.('change', onChange) ?? mql.addListener?.(onChange)
+    return () => { mql.removeEventListener?.('change', onChange) ?? mql.removeListener?.(onChange) }
+  }, [theme])
+  // Persist theme to config.json
+  useEffect(() => {
+    if (!config) return
+    void api.saveConfig({ theme }).catch(() => undefined)
+  }, [theme])
   const layoutStyle = sidebarCollapsed
     ? workbench.panelOpen
       ? { gridTemplateColumns: `${COLLAPSED_SIDEBAR_WIDTH}px minmax(390px, 1fr) 5px ${panelWidth}px` }
@@ -251,7 +280,7 @@ function App() {
     {workbench.panelOpen && <button className="drawer-backdrop" aria-label="Close work context" onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
     <button className={`panel-trigger${workbench.panelOpen ? ' open' : ''}`} style={workbench.panelOpen ? { right: panelWidth + 11 } : undefined} onClick={() => void mutate(() => api.setPanelOpen(!workbench.panelOpen))} aria-label="Toggle work context"><Icon name="panel"/></button>
     {deliverableDraft && <DeliverableDialog close={() => setDeliverableDraft(false)} save={(relativePath, label) => mutate(() => api.pinDeliverable({ relativePath, label })).then(() => setDeliverableDraft(false))}/>} 
-    {settingsOpen && <SettingsDialog settings={settings} agent={agent} close={() => setSettingsOpen(false)} restart={() => void api.retryAgent()}/>} 
+    {settingsOpen && <SettingsDialog settings={settings} agent={agent} theme={theme} setTheme={setTheme} close={() => setSettingsOpen(false)} restart={() => void api.retryAgent()}/>} 
   </main>
 }
 
@@ -1059,8 +1088,8 @@ function ChangesSection({ changes }: { changes: readonly { path: string; kind: s
 function DeliverablesSection({ entries, onNew, onReveal, onRemove }: { entries: WorkbenchSnapshot['deliverables']; onNew: () => void; onReveal: (path: string) => void; onRemove: (path: string) => void }) { return <section className="panel-section"><div className="section-title"><span>Deliverables</span><button onClick={onNew}><Icon name="plus"/></button></div>{entries.length ? <div className="deliverable-list">{entries.map((item) => <div key={item.relativePath}><button onClick={() => onReveal(item.relativePath)}><Icon name="file"/><span>{item.label}</span><small>{item.relativePath}</small></button><button className="remove" onClick={() => onRemove(item.relativePath)}><Icon name="close"/></button></div>)}</div> : <button className="quiet-add" onClick={onNew}>Pin an output file</button>}</section> }
 function DeliverableDialog({ close, save }: { close: () => void; save: (path: string, label: string) => Promise<void> }) { const [path, setPath] = useState(''); const [label, setLabel] = useState(''); return <Dialog title="Pin deliverable" close={close}><label>Relative file path<input autoFocus value={path} onChange={(event) => setPath(event.target.value)} placeholder="release/Narwhal.dmg"/></label><label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="macOS build"/></label><button className="primary" disabled={!path.trim() || !label.trim()} onClick={() => void save(path, label)}>Pin file</button></Dialog> }
 function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) { return <div className="modal" role="dialog" aria-modal="true"><form className="dialog" onSubmit={(event) => event.preventDefault()}><div><h2>{title}</h2><button className="close-dialog" onClick={close}><Icon name="close"/></button></div>{children}</form></div> }
-function SettingsDialog({ settings, agent, close, restart }: { settings: DesktopSettings; agent: AgentSnapshot; close: () => void; restart: () => void }) {
-  const [tab, setTab] = useState<'models' | 'providers' | 'permissions' | 'runtime'>('models')
+function SettingsDialog({ settings, agent, theme, setTheme, close, restart }: { settings: DesktopSettings; agent: AgentSnapshot; theme: ThemeMode; setTheme: (t: ThemeMode) => void; close: () => void; restart: () => void }) {
+  const [tab, setTab] = useState<'models' | 'providers' | 'permissions' | 'theme' | 'runtime'>('models')
   const [configuration, setConfiguration] = useState<AgentConfiguration>({ available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [] } })
   const [message, setMessage] = useState('')
   const load = async () => { try { setMessage(''); setConfiguration(await api.getAgentConfiguration()) } catch { setMessage('Unable to load local Agent settings.') } }
@@ -1071,6 +1100,7 @@ function SettingsDialog({ settings, agent, close, restart }: { settings: Desktop
     { id: 'models', label: 'Models', icon: 'model', group: 'Agent' },
     { id: 'providers', label: 'Providers', icon: 'provider', group: 'Agent' },
     { id: 'permissions', label: 'Permissions', icon: 'shield', group: 'Security' },
+    { id: 'theme', label: 'Appearance', icon: 'sliders', group: 'System' },
     { id: 'runtime', label: 'Runtime', icon: 'runtime', group: 'System' },
   ]
   const groupedNavigation = navigation.reduce<Record<string, typeof navigation>>((acc, item) => {
@@ -1082,7 +1112,25 @@ function SettingsDialog({ settings, agent, close, restart }: { settings: Desktop
   const groupOrder = ['Agent', 'Security', 'System']
   const selectTab = (next: typeof tab) => { setTab(next); document.getElementById(`settings-tab-${next}`)?.focus() }
   const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => { const index = navigation.findIndex((item) => item.id === tab); const key = event.key; const nextIndex = key === 'ArrowDown' || key === 'ArrowRight' ? (index + 1) % navigation.length : key === 'ArrowUp' || key === 'ArrowLeft' ? (index - 1 + navigation.length) % navigation.length : key === 'Home' ? 0 : key === 'End' ? navigation.length - 1 : undefined; if (nextIndex === undefined) return; event.preventDefault(); selectTab(navigation[nextIndex].id) }
-  return <div className="modal" role="dialog" aria-modal="true" aria-label="Settings"><section className="settings-dialog"><header className="settings-head"><div><p>Local workbench</p><h2>Settings</h2></div><button className="close-dialog" aria-label="Close settings" onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label="Settings sections" role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className="settings-notice" role="status">{message}</p>}{!configuration.available && tab !== 'runtime' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={() => selectTab('models')}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
+  return <div className="modal" role="dialog" aria-modal="true" aria-label="Settings"><section className="settings-dialog"><header className="settings-head"><div><p>Local workbench</p><h2>Settings</h2></div><button className="close-dialog" aria-label="Close settings" onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label="Settings sections" role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className="settings-notice" role="status">{message}</p>}{!configuration.available && tab !== 'runtime' && tab !== 'theme' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={() => selectTab('models')}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : tab === 'theme' ? <ThemeSettings theme={theme} setTheme={setTheme}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
+}
+function ThemeSettings({ theme, setTheme }: { theme: ThemeMode; setTheme: (t: ThemeMode) => void }) {
+  const options: ReadonlyArray<{ readonly id: ThemeMode; readonly label: string; readonly description: string }> = [
+    { id: 'auto', label: 'Auto', description: 'Follow your system appearance' },
+    { id: 'dark', label: 'Dark', description: 'Always use dark theme' },
+    { id: 'light', label: 'Light', description: 'Always use light theme' },
+  ]
+  return <section className="settings-page theme-settings">
+    <div className="settings-page-intro"><p>Appearance</p><small>Choose how Narwhal looks on your screen.</small></div>
+    <div className="theme-options">
+      {options.map((opt) => (
+        <label key={opt.id} className={`theme-option${theme === opt.id ? ' active' : ''}`}>
+          <input type="radio" name="theme" value={opt.id} checked={theme === opt.id} onChange={() => setTheme(opt.id)} />
+          <span className="theme-option-radio"/><span className="theme-option-label">{opt.label}</span><span className="theme-option-desc">{opt.description}</span>
+        </label>
+      ))}
+    </div>
+  </section>
 }
 function ModelSettings({ configuration, update }: { configuration: AgentConfiguration; update: (operation: () => Promise<AgentConfiguration>, notice?: string) => void }) { const current = configuration.selectedModel; const provider = configuration.models.find((item) => item.id === current?.provider) ?? configuration.models[0]; const model = provider?.models.find((item) => item.id === current?.model) ?? provider?.models[0]; const currentMatches = current?.provider === provider?.id && current?.model === model?.id; const effort = currentMatches ? current?.reasoningEffort ?? model?.defaultEffort ?? '' : model?.defaultEffort ?? ''; const select = (nextProvider: AgentConfiguration['models'][number], nextModel: AgentConfiguration['models'][number]['models'][number], nextEffort?: string) => update(() => api.selectAgentModel({ provider: nextProvider.id, model: nextModel.id, ...(nextEffort && { reasoningEffort: nextEffort }) }), ''); return <section className="settings-page model-settings"><div className="active-model-heading"><p>Active model</p><small>This choice applies to the current conversation and becomes the default for new conversations.</small></div>{provider && model ? <div className="model-controls"><label>Provider<select value={provider.id} onChange={(event) => { const nextProvider = configuration.models.find((item) => item.id === event.target.value); const nextModel = nextProvider?.models[0]; if (nextProvider && nextModel) select(nextProvider, nextModel, nextModel.defaultEffort) }}>{configuration.models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>Model<select value={model.id} onChange={(event) => { const nextModel = provider.models.find((item) => item.id === event.target.value); if (nextModel) select(provider, nextModel, nextModel.defaultEffort) }}>{provider.models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{model.efforts.length ? <label>Reasoning effort<select value={effort} onChange={(event) => select(provider, model, event.target.value || undefined)}>{model.efforts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}</div> : <p className="settings-empty">No models are currently available from the local Host.</p>}</section> }
 function ProviderSettings({ configuration, update, create, openModels }: { configuration: AgentConfiguration; update: (operation: () => Promise<AgentConfiguration>) => void; create: (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => Promise<boolean>; openModels: () => void }) { const [adding, setAdding] = useState(false); const capability = configuration.customProvider; return <section className="settings-page providers-page"><div className="settings-page-intro"><p>Credentials remain write-only. Add a compatible route from the local Host schema.</p>{!adding && <button type="button" className="add-provider" title={capability.available ? 'Add provider' : capability.reason} disabled={!capability.available} onClick={() => setAdding(true)}><Icon name="plus"/>Add provider</button>}</div>{adding && <CreateProviderForm protocols={capability.protocols} close={() => setAdding(false)} submit={async (input) => { const created = await create(input); if (created) setAdding(false); return created }}/>} {configuration.providers.length ? <div className="provider-list">{configuration.providers.map((provider) => <ProviderRow key={provider.id} provider={provider} update={update} models={configuration.models.find((group) => group.id === provider.id)?.models ?? []} openModels={openModels} onDelete={() => update(() => api.deleteProvider(provider.id))}/>)}</div> : <p className="settings-empty">No configurable providers are available from the local Agent.</p>}{!capability.available && <p className="provider-hint"><Icon name="info"/>{capability.reason ?? 'Custom providers are not available from this local Host.'}</p>}</section> }

@@ -8,6 +8,8 @@ import type { AgentConfiguration, AgentConversation, AgentSnapshot, Conversation
 import { createHostSupervisor, type HostGeneration } from './host-supervisor.js'
 import { HostBridge } from './host-bridge.js'
 import { resolveRuntime, type DshRuntime } from './runtime.js'
+import { loadConfig, getConfig, getLoadError, saveConfig, getConfigPath } from './config.js'
+import { resolveProviderOptions } from '../shared/config-schema.js'
 
 // Keep reading the existing local workbench after renaming the package from
 // narwhal-forge-macos to narwhal. A future data-directory migration can move
@@ -79,7 +81,36 @@ function scheduleWorkbenchRefresh(): void {
 
 function safeEnvironment(dshHome: string): NodeJS.ProcessEnv {
   const inherited = process.env
-  return { HOME: inherited.HOME, PATH: inherited.PATH, TMPDIR: inherited.TMPDIR, LANG: inherited.LANG, LC_ALL: inherited.LC_ALL, DEEPSEEK_API_KEY: inherited.DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL: inherited.DEEPSEEK_BASE_URL, DSH_HOME: dshHome, DSH_TELEMETRY_DISABLED: '1', ...(app.isPackaged && { ELECTRON_RUN_AS_NODE: '1' }) }
+  const configEnv: Record<string, string> = {}
+  // Resolve {env:VAR_NAME} references from config providers and inject as env vars.
+  // DSH runtime reads these from its own environment, not the parent process.
+  const cfg = getConfig()
+  for (const [providerId, providerCfg] of Object.entries(cfg.providers ?? {})) {
+    if (!providerCfg.enabled) continue
+    const resolved = resolveProviderOptions(providerCfg.options)
+    if (resolved.apiKey) {
+      // Derive the env var name from the provider ID (e.g. deepseek → DEEPSEEK_API_KEY)
+      const envName = providerId.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase() + '_API_KEY'
+      configEnv[envName] = resolved.apiKey
+    }
+    if (resolved.baseURL) {
+      const envName = providerId.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase() + '_BASE_URL'
+      configEnv[envName] = resolved.baseURL
+    }
+  }
+  return {
+    HOME: inherited.HOME,
+    PATH: inherited.PATH,
+    TMPDIR: inherited.TMPDIR,
+    LANG: inherited.LANG,
+    LC_ALL: inherited.LC_ALL,
+    DEEPSEEK_API_KEY: inherited.DEEPSEEK_API_KEY ?? configEnv.DEEPSEEK_API_KEY,
+    DEEPSEEK_BASE_URL: inherited.DEEPSEEK_BASE_URL ?? configEnv.DEEPSEEK_BASE_URL,
+    ...configEnv,
+    DSH_HOME: dshHome,
+    DSH_TELEMETRY_DISABLED: '1',
+    ...(app.isPackaged && { ELECTRON_RUN_AS_NODE: '1' }),
+  }
 }
 
 async function persist(): Promise<void> {
@@ -177,7 +208,10 @@ async function startHost(): Promise<void> {
 }
 
 function registerIpc(): void {
-  ipcMain.handle('narwhal:bootstrap', async (event) => { sender(event); return { agent, workbench: await snapshot(), settings: desktopSettings() } })
+  ipcMain.handle('narwhal:bootstrap', async (event) => { sender(event); return { agent, workbench: await snapshot(), settings: desktopSettings(), config: getConfig(), configLoadError: getLoadError() } })
+  ipcMain.handle('narwhal:get-config', async (event) => { sender(event); return getConfig() })
+  ipcMain.handle('narwhal:save-config', async (event, raw) => { sender(event); const value = asRecord(raw); return saveConfig(value as any) })
+  ipcMain.handle('narwhal:get-config-path', async (event) => { sender(event); return getConfigPath() })
   ipcMain.handle('narwhal:choose-workspace', async (event) => { sender(event); return chooseWorkspace() })
   ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })
   ipcMain.handle('narwhal:rename-workspace', async (event, raw) => { sender(event); const value = asRecord(raw); const id = asString(value.workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); const name = asString(value.name, 'workspace name', 120); if (!name) throw new Error('Workspace name is required'); workspace.name = name; await persist(); return snapshot() })
@@ -242,7 +276,10 @@ function registerIpc(): void {
 }
 async function bootstrap(): Promise<void> {
   console.log('[narwhal] bootstrap: registering protocol...')
-  registerNarwhalProtocol(); await loadStore(); const dshHome = join(app.getPath('userData'), 'dsh-home'); await mkdir(dshHome, { recursive: true, mode: 0o700 }); selectedRuntime = resolveRuntime()
+  registerNarwhalProtocol(); await loadStore(); await loadConfig()
+  const cfg = getConfig(); if (getLoadError()) console.warn('[narwhal] config warning:', getLoadError())
+  console.log('[narwhal] bootstrap: config loaded from', getConfigPath(), 'theme:', cfg.theme, 'defaultModel:', cfg.defaultModel)
+  const dshHome = join(app.getPath('userData'), 'dsh-home'); await mkdir(dshHome, { recursive: true, mode: 0o700 }); selectedRuntime = resolveRuntime()
   console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry)
   activeSupervisor = createHostSupervisor(() => spawn(app.isPackaged ? process.execPath : (process.env.DSH_NODE_EXECUTABLE ?? 'node'), [...selectedRuntime!.launchArguments, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
   hostBridge.subscribe((conversation) => { emitConversation(conversation); scheduleWorkbenchRefresh() })

@@ -13,6 +13,28 @@ export interface AgentConversation { readonly sessions: readonly AgentSession[];
 export interface WorkbenchSnapshot { readonly workspaces: readonly Workspace[]; readonly selectedWorkspaceId?: string; readonly conversations: readonly Conversation[]; readonly selectedConversationId?: string; readonly deliverables: readonly Deliverable[]; readonly panelOpen: boolean; readonly git: { readonly branch?: string; readonly changes: readonly GitChange[] }; readonly conversation: AgentConversation }
 export interface AgentSnapshot { readonly state: AgentState; readonly origin?: string }
 export interface DesktopSettings { readonly appVersion: string; readonly runtimeVersion: string; readonly dataDirectory: string }
+export type ThemeMode = 'auto' | 'dark' | 'light'
+export interface NarwhalConfig {
+  readonly version: 1
+  readonly theme: ThemeMode
+  readonly defaultModel?: string
+  readonly defaultEffort: 'low' | 'medium' | 'high'
+  readonly agentMode: string
+  readonly permissionLevel: string
+  readonly providers: ReadonlyRecord<string, ProviderConfig>
+}
+export interface ProviderConfig {
+  readonly type?: string
+  readonly enabled: boolean
+  readonly options?: ProviderOptions
+  readonly models?: readonly { readonly id: string; readonly name?: string }[]
+}
+export interface ProviderOptions {
+  readonly apiKey?: string
+  readonly baseURL?: string
+  readonly headers?: ReadonlyRecord<string, string>
+}
+type ReadonlyRecord<K extends string, V> = { readonly [key in K]?: V }
 export interface ModelEffort { readonly id: string; readonly name: string; readonly description?: string }
 export interface AgentModel { readonly id: string; readonly name: string; readonly description?: string; readonly efforts: readonly ModelEffort[]; readonly defaultEffort?: string; readonly effortsNative?: boolean }
 export interface ModelProvider { readonly id: string; readonly name: string; readonly models: readonly AgentModel[] }
@@ -21,7 +43,7 @@ export interface CustomProviderCapability { readonly available: boolean; readonl
 export interface AgentConfiguration { readonly available: boolean; readonly writable: boolean; readonly providers: readonly ProviderSetting[]; readonly models: readonly ModelProvider[]; readonly defaultPermission?: string; readonly permissionOptions: readonly { readonly id: string; readonly label: string }[]; readonly customProvider: CustomProviderCapability; readonly selectedModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }; readonly error?: string }
 export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean }
 export interface NarwhalBridge {
-  bootstrap(): Promise<{ readonly agent: AgentSnapshot; readonly workbench: WorkbenchSnapshot; readonly settings: DesktopSettings }>
+  bootstrap(): Promise<{ readonly agent: AgentSnapshot; readonly workbench: WorkbenchSnapshot; readonly settings: DesktopSettings; readonly config: NarwhalConfig; readonly configLoadError?: string }>
   chooseWorkspace(): Promise<WorkbenchSnapshot>
   selectWorkspace(workspaceId: string): Promise<WorkbenchSnapshot>
   renameWorkspace(input: { readonly workspaceId: string; readonly name: string }): Promise<WorkbenchSnapshot>
@@ -49,6 +71,9 @@ export interface NarwhalBridge {
   deleteProvider(providerId: string): Promise<AgentConfiguration>
   createProvider(input: { readonly id: string; readonly displayName?: string; readonly baseUrl: string; readonly protocol: string; readonly modelIds: readonly string[]; readonly apiKey?: string }): Promise<CreateProviderResult>
   retryAgent(): Promise<void>
+  getConfig(): Promise<NarwhalConfig>
+  saveConfig(patch: Partial<NarwhalConfig>): Promise<NarwhalConfig>
+  getConfigPath(): Promise<string>
   onAgentState(listener: (state: AgentSnapshot) => void): () => void
   onConversation(listener: (conversation: AgentConversation) => void): () => void
   onWorkbench(listener: (workbench: WorkbenchSnapshot) => void): () => void

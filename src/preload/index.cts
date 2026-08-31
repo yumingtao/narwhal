@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, WorkbenchSnapshot } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, NarwhalConfig, WorkbenchSnapshot } from '../shared/desktop-contract.js'
 
 const invoke = <T,>(channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload) as Promise<T>
 const bridge: NarwhalBridge = Object.freeze({
-  bootstrap: () => invoke<{ agent: AgentSnapshot; workbench: WorkbenchSnapshot; settings: DesktopSettings }>('narwhal:bootstrap'),
+  bootstrap: () => invoke<{ agent: AgentSnapshot; workbench: WorkbenchSnapshot; settings: DesktopSettings; config: NarwhalConfig; configLoadError?: string }>('narwhal:bootstrap'),
   chooseWorkspace: () => invoke<WorkbenchSnapshot>('narwhal:choose-workspace'),
   selectWorkspace: (workspaceId: string) => invoke<WorkbenchSnapshot>('narwhal:select-workspace', { workspaceId }),
   renameWorkspace: (input: { workspaceId: string; name: string }) => invoke<WorkbenchSnapshot>('narwhal:rename-workspace', input),
@@ -34,6 +34,9 @@ const bridge: NarwhalBridge = Object.freeze({
   deleteProvider: (providerId: string) => invoke<AgentConfiguration>('narwhal:delete-provider', { providerId }),
   createProvider: (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: string[]; apiKey?: string }) => invoke<CreateProviderResult>('narwhal:create-provider', input),
   retryAgent: () => invoke<void>('narwhal:retry-agent'),
+  getConfig: () => invoke<NarwhalConfig>('narwhal:get-config'),
+  saveConfig: (patch: Partial<NarwhalConfig>) => invoke<NarwhalConfig>('narwhal:save-config', patch),
+  getConfigPath: () => invoke<string>('narwhal:get-config-path'),
   onAgentState: (listener: (state: AgentSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: AgentSnapshot) => listener(state)
     ipcRenderer.on('narwhal:agent-state', handler)
