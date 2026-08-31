@@ -84,11 +84,16 @@ export async function saveConfig(patch: Partial<NarwhalConfig>): Promise<Narwhal
 
   cachedConfig = result.data
 
-  const configPath = getConfigPath()
-  const configDir = join(configPath, '..')
-  if (!existsSync(configDir)) await mkdir(configDir, { recursive: true })
-
-  await writeFile(configPath, JSON.stringify(cachedConfig, null, 2) + '\n', 'utf-8')
+  try {
+    const configPath = getConfigPath()
+    const configDir = join(configPath, '..')
+    if (!existsSync(configDir)) await mkdir(configDir, { recursive: true })
+    await writeFile(configPath, JSON.stringify(cachedConfig, null, 2) + '\n', 'utf-8')
+  } catch (error) {
+    // Non-fatal: in-memory state is authoritative. Write failure can happen in
+    // sandboxed environments (e.g. restricted userData dir) or read-only filesystems.
+    console.warn('[narwhal] saveConfig: failed to persist to disk:', error instanceof Error ? error.message : String(error))
+  }
   return cachedConfig
 }
 

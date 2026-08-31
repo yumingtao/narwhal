@@ -192,6 +192,7 @@ function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('narwhal:theme', theme)
+    console.log('[narwhal-renderer] theme applied:', theme, '→ data-theme=', document.documentElement.dataset.theme)
   }, [theme])
   // Listen to system preference changes when theme is "auto"
   useEffect(() => {
