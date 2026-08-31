@@ -1,6 +1,6 @@
 <h1 align="center">Narwhal</h1>
 <p align="center">
-  <strong>A local-first personal AI coding workbench.</strong>
+  <strong>A local-first, privacy-first AI agent.</strong>
 
   Runs a compatible Harness runtime on loopback only. Owns every conversation, project, and work-context surface.
 </p>
@@ -14,21 +14,21 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/hero-desktop.png" alt="Narwhal Desktop — Native Agent Workbench" width="100%">
+  <img src="assets/screenshots/hero-desktop.png" alt="Narwhal — Local AI Agent" width="100%">
 </p>
 
 ## What is Narwhal?
 
-Narwhal is a desktop application that brings a local-first, secure AI coding workbench to your machine. It starts a compatible [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) runtime on loopback only, using it strictly as a local Agent sidecar. The desktop app owns every visible conversation, activity, project, and work-context surface — you never interact with the upstream product's UI.
+Narwhal is a desktop application that brings a local-first, privacy-first AI agent to your machine. It starts a compatible [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) runtime on loopback only, using it strictly as a local Agent sidecar. The desktop app owns every visible conversation, activity, project, and work-context surface — you never interact with the upstream product's UI.
 
-Narwhal is designed for developers who want the power of DeepSeek Harness without compromising local control, privacy, or workflow autonomy.
+Narwhal is designed for anyone who wants the power of DeepSeek Harness without compromising local control, privacy, or workflow autonomy.
 
 ## Key Features
 
 | Capability | What it does |
 | --- | --- |
-| **Local-First Workbench** | Native workspace picker, remembered local workspaces, and project-scoped session management — all stored locally. |
-| **Narwhal-Owned Agent Conversations** | A dedicated Work / Activity view with real history loading, prompt cancellation, and local-only data persistence. |
+| **Local-First, Privacy-First** | Native workspace picker, remembered local workspaces, and project-scoped session management — all stored locally. Zero cloud lock-in. |
+| **Narwhal-Owned Conversations** | A dedicated Work / Activity view with real history loading, prompt cancellation, and local-only data persistence. |
 | **Safe Task Execution** | Local task plans, checkable steps, Git branch/changed-file inspection, and safely pinned deliverables. |
 | **Secure Loopback BFF** | A main-process-only Backend-for-Frontend: fixed Host origin, allow-listed session RPCs, and normalized event streams. The renderer cannot fetch the Host, pick a URL/cwd, or receive raw host configuration. |
 | **Narrow Typed IPC Bridge** | No Node, generic file system, shell, terminal, raw IPC, or arbitrary-path API is exposed to the renderer. A strict typed contract in `src/shared/desktop-contract.ts` defines the entire surface. |

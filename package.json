@@ -2,7 +2,8 @@
   "name": "narwhal",
   "version": "0.1.0",
   "private": true,
-  "description": "Narwhal, a local-first personal AI coding workbench for desktop.",
+  "author": "yumingtao <10069214+yumingtao@users.noreply.github.com>",
+  "description": "A local-first, privacy-first AI agent. Your conversations, projects, and work context stay on your machine.",
   "type": "module",
   "main": "dist/main/index.js",
   "engines": {
@@ -15,7 +16,7 @@
     "dev:web": "vite --config vite.config.ts --host",
     "start": "electron .",
     "stage:runtime": "node scripts/stage-runtime.mjs",
-    "package:mac": "pnpm run build && pnpm run stage:runtime && electron-builder --mac dmg zip"
+    "package:mac": "pnpm run build && pnpm run stage:runtime && electron-builder --mac dmg zip --publish never"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
@@ -49,6 +50,7 @@
       "dist/preload/**",
       "dist/recovery/**",
       "dist/renderer/**",
+      "dist/shared/**",
       "runtime/manifest.json",
       "package.json"
     ],

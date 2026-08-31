@@ -92,6 +92,49 @@ async function restoreDirectWorkspacePackages(sources) {
   }
 }
 
+async function pruneUnusedDependencies(directory) {
+  // Packages that are not needed at runtime in the desktop app.
+  // These are either optional agents (codex/claude binaries), dev tools,
+  // or telemetry that makes no sense in a packaged local app.
+  const pruneList = [
+    '@openai/codex',
+    '@openai/codex-darwin-arm64',
+    '@openai/codex-darwin-x64',
+    '@openai/codex-linux-arm64',
+    '@openai/codex-linux-x64',
+    '@openai/codex-win32-x64',
+    '@anthropic-ai/claude-agent-sdk',
+    '@anthropic-ai/claude-agent-sdk-darwin-arm64',
+    '@anthropic-ai/claude-agent-sdk-darwin-x64',
+    '@anthropic-ai/claude-agent-sdk-linux-arm64',
+    '@anthropic-ai/claude-agent-sdk-linux-x64',
+    '@anthropic-ai/claude-agent-sdk-win32-x64',
+    'typescript',
+    'vite',
+  ]
+  const scopes = new Set(['opentelemetry', 'opentelemetry-contrib'])
+  let removed = 0
+  for (const pkg of pruneList) {
+    const path = join(directory, 'node_modules', ...pkg.split('/'))
+    if (existsSync(path)) {
+      await rm(path, { recursive: true, force: true })
+      removed++
+    }
+  }
+  const nodeModules = join(directory, 'node_modules')
+  if (existsSync(nodeModules)) {
+    for (const scopeDir of await readdir(nodeModules, { withFileTypes: true })) {
+      if (!scopeDir.isDirectory() || !scopeDir.name.startsWith('@')) continue
+      const scopeName = scopeDir.name.slice(1)
+      if (scopes.has(scopeName)) {
+        await rm(join(nodeModules, scopeDir.name), { recursive: true, force: true })
+        removed++
+      }
+    }
+  }
+  if (removed > 0) console.log(`Pruned ${removed} unused dependency paths`)
+}
+
 async function removeBuildMachinePaths(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name)
@@ -132,6 +175,7 @@ try {
   await materializeLinks()
   await restoreDirectWorkspacePackages(workspacePackages.sources)
   await removeBuildMachinePaths(target)
+  await pruneUnusedDependencies(target)
   const entry = join(target, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
   const frontend = join(target, 'node_modules', '@deepseek-ai', 'dsh-web-frontend', 'dist', 'index.html')
   if (!existsSync(entry) || !existsSync(frontend)) {
