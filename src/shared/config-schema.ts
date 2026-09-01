@@ -115,6 +115,29 @@ const skillConfigSchema = z.object({
 })
 export type SkillConfig = z.infer<typeof skillConfigSchema>
 
+// ── Runtime config (dev-only override for packaged runtime discovery) ───────
+// In production Narwhal always ships a bundled DSH runtime at a fixed path.
+// In dev we need to tell Narwhal where the DSH checkout lives — either a
+// source-tree checkout (DeepSeek-Harness) or a deployed one (npm install).
+
+export const runtimeSchema = z.object({
+  /**
+   * Absolute path to the DSH runtime directory. Leave undefined to let
+   * Narwhal auto-discover (projectRoot/runtime/dsh first, then ../DeepSeek-Harness).
+   */
+  root: z.string().min(1).optional(),
+  /**
+   * How to boot the runtime:
+   *   - "deployed"  — npm-installed package (bin.js via node)
+   *   - "source"    — source-tree checkout (bin.ts via tsx)
+   * Leave undefined to auto-detect based on cliEntry file extension.
+   */
+  mode: z.enum(['deployed', 'source']).optional(),
+  /** Override the node executable path used to spawn DSH (dev only). */
+  nodeExecutable: z.string().min(1).optional(),
+})
+export type RuntimeConfig = z.infer<typeof runtimeSchema>
+
 // ── Top-level config ───────────────────────────────────────────────────────
 
 export const configSchema = z.object({
@@ -135,6 +158,9 @@ export const configSchema = z.object({
     preset: z.enum(AGENT_PRESETS).optional().default('standard'),
     permissionLevel: z.enum(PERMISSION_PRESETS).optional().default('workspace-write'),
   }).optional().default({ preset: 'standard', permissionLevel: 'workspace-write' }),
+
+  // Runtime override (dev only — packaged builds ship a fixed runtime)
+  runtime: runtimeSchema.optional(),
 
   // Provider routes → sync to DSH llm-pi-ai namespace
   providers: z.record(z.string(), providerSchema).optional().default({}),
