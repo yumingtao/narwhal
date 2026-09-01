@@ -21,7 +21,10 @@ const NARWHAL_COMMANDS_PLUGIN_CODE = String.raw`
 import { Service } from "@deepseek-ai/cordis";
 
 class NarwhalCommands extends Service {
-  static inject = ["webServer", "sessions", "agents", "compaction"];
+  // compaction is optional — it may not be present in every profile
+  // (e.g. a headless build could disable it). We fetch it at call time
+  // via ctx.get() rather than listing it in static inject.
+  static inject = ["webServer", "sessions", "agents"];
   constructor(ctx) { super(ctx, "narwhalCommands"); }
 
   async [Service.init]() {
@@ -67,9 +70,11 @@ class NarwhalCommands extends Service {
           if (p === "/api/narwhal/compact" && req.method === "POST") {
             const { sessionId } = await readBody(req);
             if (!sessionId) return sendJson(res, 400, { ok: false, error: "sessionId required" });
+            const compaction = ctx.get("compaction");
+            if (!compaction) return sendJson(res, 503, { ok: false, error: "compaction service not available in this profile" });
             const agent = ctx.agents.get(sessionId);
             if (!agent) return sendJson(res, 404, { ok: false, error: "no live agent for session" });
-            const result = await ctx.compaction.compactNow(agent, new AbortController().signal, "narwhal-web");
+            const result = await compaction.compactNow(agent, new AbortController().signal, "narwhal-web");
             if (result === null) return sendJson(res, 200, { ok: true, compacted: false, reason: "no compactable history" });
             return sendJson(res, 200, {
               ok: true, compacted: true,
@@ -278,19 +283,28 @@ interface CordisEntry {
   config?: Record<string, unknown>
 }
 
+/** Top-level patch item — either an override (- id:) or an insert (- insert:). */
+type CordisPatchItem =
+  | CordisEntry
+  | { insert: CordisEntry[] }
+
 function buildCordisPatchYaml(config: NarwhalConfig, configPath: string): string {
-  const entries: CordisEntry[] = []
+  const items: CordisPatchItem[] = []
 
   // ── Narwhal core plugin (always-on, provides /plan, /feedback, /compact) ──
-  entries.push({
-    id: 'narwhal-commands',
-    name: '@narwhal/narwhal-commands',
-    disabled: false,
+  // This is a brand-new entry not present in any bundle, so it MUST use
+  // `- insert:` syntax rather than `- id:` (which only overrides existing rows).
+  items.push({
+    insert: [{
+      id: 'narwhal-commands',
+      name: '@narwhal/narwhal-commands',
+      disabled: false,
+    }],
   })
 
-  // ── Skill system ────────────────────────────────────────────────────────
+  // ── Skill system (override existing bundle rows) ──────────────────────────
   if (config.skills.enabled) {
-    entries.push(
+    items.push(
       {
         id: 'skill-filesystem',
         disabled: false,
@@ -305,12 +319,12 @@ function buildCordisPatchYaml(config: NarwhalConfig, configPath: string): string
     )
   }
 
-  // ── MCP servers ────────────────────────────────────────────────────────
+  // ── MCP servers (these are new entries too — each needs `- insert:`) ───────
   for (const server of config.mcpServers) {
-    entries.push(mcpServerToEntry(server))
+    items.push({ insert: [mcpServerToEntry(server)] })
   }
 
-  return CORDIS_PATCH_HEADER.replace('{configPath}', configPath) + yaml.stringify(entries)
+  return CORDIS_PATCH_HEADER.replace('{configPath}', configPath) + yaml.stringify(items)
 }
 
 function mcpServerToEntry(server: McpServer): CordisEntry {
