@@ -1,96 +1,178 @@
 import { z } from 'zod'
 
-// ── Schema ──────────────────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────
+
+export const CONFIG_VERSION = 1
 
 export const THEME_MODES = ['auto', 'dark', 'light'] as const
 export type ThemeMode = (typeof THEME_MODES)[number]
 
+export const PERMISSION_PRESETS = ['read-only', 'workspace-write', 'danger-full-access'] as const
+export type PermissionPreset = (typeof PERMISSION_PRESETS)[number]
+
+export const AGENT_PRESETS = ['standard', 'minimal'] as const
+export type AgentPreset = (typeof AGENT_PRESETS)[number]
+
 export const ENV_VAR_PATTERN = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/u
+
+// ── Provider profile (matches DSH PiAiProviderProfile) ─────────────────────
 
 const envString = z.string().superRefine((value, ctx) => {
   if (value.startsWith('{env:') && !ENV_VAR_PATTERN.test(value)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `"${value}" is not a valid {env:VAR_NAME} reference`,
-    })
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `"${value}" is not a valid {env:VAR_NAME} reference` })
   }
 })
 
-const providerOptionsSchema = z.object({
-  apiKey: envString.optional(),
-  baseURL: z.string().url().optional(),
-  headers: z.record(z.string(), envString).optional(),
+const modelProfileSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  input: z.array(z.enum(['text', 'image'])).optional(),
+  reasoningEfforts: z.array(z.enum(['low', 'medium', 'high'])).optional(),
+  compat: z.record(z.string(), z.any()).optional(),
+  maxTokens: z.number().positive().optional(),
+  contextWindow: z.number().positive().optional(),
 })
+
+export type ModelProfile = z.infer<typeof modelProfileSchema>
 
 const providerSchema = z.object({
-  type: z.enum(['deepseek', 'anthropic', 'openai', 'openai-compatible', 'other']).optional(),
-  enabled: z.boolean().optional().default(true),
-  options: providerOptionsSchema.optional(),
-  models: z.array(z.object({
-    id: z.string().min(1),
-    name: z.string().min(1).optional(),
-  })).optional(),
+  // Basic identity
+  displayName: z.string().min(1).optional(),
+  api: z.string().min(1).optional(),
+  baseURL: z.string().url().optional(),
+
+  // Credential: env var name that holds the API key (DSH resolves per request)
+  apiKeyEnv: z.string().min(1).optional(),
+
+  // Models
+  models: z.array(modelProfileSchema).optional(),
+
+  // Model-level overrides for models on the installed pi-ai catalog
+  modelOverrides: z.record(z.string(), z.record(z.string(), z.any())).optional(),
+
+  // Global defaults for this route (catalog models + route-unspecified models inherit)
+  defaultContextWindow: z.number().positive().optional(),
+  defaultMaxTokens: z.number().positive().optional(),
+  defaultInput: z.array(z.enum(['text', 'image'])).optional(),
+
+  // Compatibility switches
+  compat: z.record(z.string(), z.any()).optional(),
+
+  // Transport knobs
+  headers: z.record(z.string(), envString).optional(),
+  reasoning: z.enum(['none', 'low', 'medium', 'high', 'full']).optional(),
+  thinkingBudgets: z.record(z.string(), z.any()).optional(),
+  cacheRetention: z.string().optional(),
+  transport: z.string().optional(),
+
+  // Timeouts
+  timeoutMs: z.number().positive().optional(),
+  websocketConnectTimeoutMs: z.number().positive().optional(),
+  streamIdleTimeoutMs: z.number().positive().optional(),
+
+  // Image handling
+  maxRequestImageBytes: z.number().positive().optional(),
+  requestImagePixelBudget: z.number().positive().optional(),
+  requestImageMaxBytes: z.number().positive().optional(),
+
+  // Retry
+  retryPolicy: z.record(z.string(), z.any()).optional(),
 })
 
+export type ProviderProfile = z.infer<typeof providerSchema>
+
+// ── MCP server ─────────────────────────────────────────────────────────────
+
+const stdioMcpSchema = z.object({
+  serverName: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/),
+  transport: z.literal('stdio'),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string(), z.string()).optional(),
+  cwd: z.string().optional(),
+  toolCallTimeoutMs: z.number().positive().optional().default(60000),
+  failOnStartupError: z.boolean().optional().default(false),
+})
+
+const httpMcpSchema = z.object({
+  serverName: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/),
+  transport: z.literal('streamable-http'),
+  url: z.string().url(),
+  headers: z.record(z.string(), envString).optional(),
+  toolCallTimeoutMs: z.number().positive().optional().default(60000),
+  failOnStartupError: z.boolean().optional().default(false),
+})
+
+export const mcpServerSchema = z.discriminatedUnion('transport', [stdioMcpSchema, httpMcpSchema])
+export type McpServer = z.infer<typeof mcpServerSchema>
+
+// ── Skill config ───────────────────────────────────────────────────────────
+
+const skillConfigSchema = z.object({
+  enabled: z.boolean().optional().default(false),
+  customDirs: z.array(z.string()).optional().default([]),
+  bundledDir: z.string().optional(),
+})
+export type SkillConfig = z.infer<typeof skillConfigSchema>
+
+// ── Top-level config ───────────────────────────────────────────────────────
+
 export const configSchema = z.object({
-  version: z.literal(1).default(1),
+  version: z.literal(CONFIG_VERSION),
   theme: z.enum(THEME_MODES).optional().default('auto'),
-  defaultModel: z.string().min(1).optional(),
-  defaultEffort: z.enum(['low', 'medium', 'high']).optional().default('medium'),
-  agentMode: z.string().min(1).optional().default('minimal'),
-  permissionLevel: z.string().min(1).optional().default('default'),
+
+  // UI onboarding state (mirrors DSH ui-onboarding namespace)
+  uiOnboarding: z.string().optional(),
+
+  // Agent defaults → sync to DSH agent-default-model + permission namespaces
+  defaultModel: z.object({
+    provider: z.string().min(1),
+    model: z.string().min(1),
+    reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+  }).optional(),
+
+  agent: z.object({
+    preset: z.enum(AGENT_PRESETS).optional().default('standard'),
+    permissionLevel: z.enum(PERMISSION_PRESETS).optional().default('workspace-write'),
+  }).optional().default({ preset: 'standard', permissionLevel: 'workspace-write' }),
+
+  // Provider routes → sync to DSH llm-pi-ai namespace
   providers: z.record(z.string(), providerSchema).optional().default({}),
+
+  // Skill system → sync to DSH cordis.patch.yml (enable skill-filesystem)
+  skills: skillConfigSchema.optional().default({ enabled: false, customDirs: [] }),
+
+  // MCP servers → each becomes one dsh-mcp-client plugin entry in cordis.patch.yml
+  mcpServers: z.array(mcpServerSchema).optional().default([]),
 })
 
 export type NarwhalConfig = z.infer<typeof configSchema>
-export type ProviderConfig = z.infer<typeof providerSchema>
-export type ProviderOptions = z.infer<typeof providerOptionsSchema>
 
-// ── Defaults ────────────────────────────────────────────────────────────────
+// ── Defaults ───────────────────────────────────────────────────────────────
 
 export const defaultConfig: NarwhalConfig = {
-  version: 1,
+  version: CONFIG_VERSION,
   theme: 'auto',
-  defaultModel: 'deepseek-chat',
-  defaultEffort: 'medium',
-  agentMode: 'minimal',
-  permissionLevel: 'default',
-  providers: {
-    deepseek: {
-      enabled: true,
-      options: {
-        apiKey: '{env:DEEPSEEK_API_KEY}',
-      },
-    },
-    anthropic: {
-      enabled: true,
-      options: {
-        apiKey: '{env:ANTHROPIC_API_KEY}',
-      },
-    },
-    openai: {
-      enabled: true,
-      options: {
-        apiKey: '{env:OPENAI_API_KEY}',
-      },
-    },
+  providers: {},
+  agent: {
+    preset: 'standard',
+    permissionLevel: 'workspace-write',
   },
+  skills: {
+    enabled: false,
+    customDirs: [],
+  },
+  mcpServers: [],
 }
 
 // ── Env var resolution ──────────────────────────────────────────────────────
 
-export interface ResolvedProviderOptions {
-  apiKey?: string
-  baseURL?: string
-  headers?: Record<string, string>
-  unresolvedEnvRefs: string[]
+export interface EnvResolveResult {
+  resolved?: string
+  missing?: string
 }
 
-/**
- * Resolve a single config value that may be a {env:VAR_NAME} reference.
- * Returns the resolved value if the env var exists, or undefined if not.
- */
-export function resolveEnvValue(value: string): { resolved?: string; missing?: string } {
+export function resolveEnvValue(value: string): EnvResolveResult {
   const match = value.match(ENV_VAR_PATTERN)
   if (!match) return { resolved: value }
   const varName = match[1]
@@ -100,49 +182,24 @@ export function resolveEnvValue(value: string): { resolved?: string; missing?: s
 }
 
 /**
- * Resolve all {env:} references in a provider options object.
- * Collects unresolved refs so callers can warn the user.
+ * Walk a plain object and resolve all {env:VAR} string leaves.
+ * Returns a new object with resolved values; unresolved vars remain as-is
+ * and are collected in the return's second element.
  */
-export function resolveProviderOptions(options: ProviderOptions | undefined): ResolvedProviderOptions {
-  const result: ResolvedProviderOptions = { unresolvedEnvRefs: [] }
-  if (!options) return result
-
-  if (options.apiKey) {
-    const { resolved, missing } = resolveEnvValue(options.apiKey)
-    if (resolved) result.apiKey = resolved
-    else if (missing) result.unresolvedEnvRefs.push(missing)
+export function deepResolveEnv<T>(obj: T, collected: Set<string> = new Set()): T {
+  if (typeof obj === 'string') {
+    const r = resolveEnvValue(obj)
+    if (r.resolved !== undefined) return r.resolved as unknown as T
+    if (r.missing) collected.add(r.missing)
+    return obj
   }
-
-  if (options.baseURL) {
-    const { resolved, missing } = resolveEnvValue(options.baseURL)
-    if (resolved) result.baseURL = resolved
-    else if (missing) result.unresolvedEnvRefs.push(missing)
-  }
-
-  if (options.headers) {
-    const resolvedHeaders: Record<string, string> = {}
-    for (const [key, value] of Object.entries(options.headers)) {
-      const { resolved, missing } = resolveEnvValue(value)
-      if (resolved) resolvedHeaders[key] = resolved
-      else if (missing) result.unresolvedEnvRefs.push(missing)
+  if (Array.isArray(obj)) return obj.map((v) => deepResolveEnv(v, collected)) as unknown as T
+  if (obj && typeof obj === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(obj)) {
+      result[k] = deepResolveEnv(v, collected)
     }
-    if (Object.keys(resolvedHeaders).length > 0) result.headers = resolvedHeaders
+    return result as unknown as T
   }
-
-  return result
-}
-
-// ── Template generation ─────────────────────────────────────────────────────
-
-export function generateConfigTemplate(): string {
-  return JSON.stringify(defaultConfig, null, 2) +
-    `\n\n# Narwhal configuration file\n` +
-    `# Path: ~/.config/narwhal/config.json\n` +
-    `#\n` +
-    `# API keys are referenced via {env:VAR_NAME} syntax.\n` +
-    `# Set them in your shell profile (~/.zshrc / ~/.bashrc):\n` +
-    `#   export DEEPSEEK_API_KEY="sk-..."\n` +
-    `#   export ANTHROPIC_API_KEY="sk-ant-..."\n` +
-    `#\n` +
-    `# Restart Narwhal after changing env vars.\n`
+  return obj
 }

@@ -4,7 +4,7 @@ import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github-dark.css'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ChatItem, Conversation, DesktopSettings, NarwhalConfig, ThemeMode, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ChatItem, Command, Conversation, DesktopSettings, NarwhalConfig, ThemeMode, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
 import { classifyTrajectory } from '../shared/trajectory-classifier'
 import { buildTrajectoryData } from './trajectory/builder'
 import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar'
@@ -756,14 +756,30 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const [effortMenuOpen, setEffortMenuOpen] = useState(false)
   const [fallbackEffort, setFallbackEffort] = useState<string | undefined>(undefined)
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [commands, setCommands] = useState<readonly Command[]>([])
+  const [commandOpen, setCommandOpen] = useState(false)
+  const [commandIndex, setCommandIndex] = useState(0)
   const input = useRef<HTMLTextAreaElement>(null)
   const permissionTrigger = useRef<HTMLButtonElement>(null)
   const modelTrigger = useRef<HTMLButtonElement>(null)
   const effortTrigger = useRef<HTMLButtonElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
+  // Load command list whenever slash menu opens
   useEffect(() => {
-    if (running) { setText(''); setAttachments([]); input.current?.blur() }
+    if (!commandOpen) return
+    let cancelled = false
+    void api.listCommands().then((list) => { if (!cancelled) setCommands(list) }).catch(() => { if (!cancelled) setCommands([]) })
+    return () => { cancelled = true }
+  }, [commandOpen])
+
+  useEffect(() => {
+    // Reset index when filter changes
+    setCommandIndex(0)
+  }, [commandOpen, text])
+
+  useEffect(() => {
+    if (running) { setText(''); setAttachments([]); setCommandOpen(false); input.current?.blur() }
   }, [running])
 
   useEffect(() => {
@@ -817,10 +833,51 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
     return `${(bytes / 1024 * 1024).toFixed(1)} MB`
   }
 
-  const submit = (event: FormEvent) => {
+  // Slash command helpers: find the current "/" word before caret, or null
+  const getSlashContext = (value: string, caret: number): { word: string; start: number } | null => {
+    const beforeCaret = value.slice(0, caret)
+    const match = beforeCaret.match(/(?:^|\s)(\/[A-Za-z0-9_-]{0,40})$/)
+    if (!match) return null
+    // match.index is position of leading (space or start); actual slash word starts right after
+    const start = (match.index ?? 0) + (match[1].startsWith('/') ? 0 : match[0].length - match[1].length)
+    return { word: match[1], start }
+  }
+
+  const slashContext = getSlashContext(text, input.current?.selectionStart ?? text.length)
+  const filteredCommands = useMemo(() => {
+    if (!slashContext) return []
+    const filter = slashContext.word.slice(1).toLowerCase() // without leading "/"
+    if (!filter) return commands
+    return commands.filter((c) => c.name.toLowerCase().startsWith(filter) || c.description.toLowerCase().includes(filter)).slice(0, 12)
+  }, [commands, slashContext])
+
+  const acceptCommand = (cmd: Command) => {
+    if (!slashContext) return
+    const before = text.slice(0, slashContext.start)
+    const after = text.slice(input.current?.selectionStart ?? text.length)
+    const replacement = `/${cmd.name}`
+    const newText = before + replacement + ' ' + after
+    setText(newText)
+    setCommandOpen(false)
+    // Position caret right after the command name + space
+    requestAnimationFrame(() => {
+      const pos = slashContext.start + replacement.length + 1
+      input.current?.setSelectionRange(pos, pos)
+      input.current?.focus()
+    })
+  }
+
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
     const message = text.trim()
-    if ((!message && attachments.length === 0) || running) return
+    if (!message || running) return
+    // If the message is a slash command, execute it directly
+    if (message.startsWith('/')) {
+      setText('')
+      setCommandOpen(false)
+      try { await api.executeCommand(message) } catch { /* error surfaced via event stream */ }
+      return
+    }
     setText('')
     send(message, attachments.length > 0 ? attachments : undefined)
     setAttachments([])
@@ -897,17 +954,56 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
       <textarea
         ref={input}
         value={text}
-        onChange={(event) => setText(event.target.value)}
+        onChange={(event) => {
+          const next = event.target.value
+          const caret = event.target.selectionStart
+          setText(next)
+          // Toggle command menu based on whether caret is inside a "/" word
+          const ctx = getSlashContext(next, caret)
+          if (ctx) setCommandOpen(true)
+          else setCommandOpen(false)
+        }}
         placeholder={running ? 'The Agent is working…' : hasSession ? 'Describe what you want to build' : 'Select or create a conversation first'}
         disabled={running}
         rows={centered ? 4 : 2}
         onKeyDown={(event) => {
+          const open = commandOpen && filteredCommands.length > 0
+          if (event.key === 'Escape') { if (open) { event.preventDefault(); setCommandOpen(false) }; return }
+          if (open) {
+            if (event.key === 'ArrowDown') { event.preventDefault(); setCommandIndex((i) => (i + 1) % Math.max(filteredCommands.length, 1)); return }
+            if (event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex((i) => (i - 1 + Math.max(filteredCommands.length, 1)) % Math.max(filteredCommands.length, 1)); return }
+            if (event.key === 'Tab' || event.key === 'Enter') {
+              event.preventDefault()
+              const picked = filteredCommands[commandIndex]
+              if (picked) acceptCommand(picked)
+              return
+            }
+          }
           if (event.key === 'Enter' && !event.shiftKey) {
             event.preventDefault()
             event.currentTarget.form?.requestSubmit()
           }
         }}
       />
+      {commandOpen && filteredCommands.length > 0 && (
+        <div className="command-popup" role="listbox" aria-label="Slash commands">
+          <div className="command-popup-title">Commands</div>
+          {filteredCommands.map((cmd, idx) => (
+            <button
+              type="button"
+              key={cmd.name}
+              role="option"
+              aria-selected={idx === commandIndex}
+              className={`command-item ${idx === commandIndex ? 'active' : ''}`}
+              onMouseEnter={() => setCommandIndex(idx)}
+              onClick={() => acceptCommand(cmd)}
+            >
+              <span className="command-item-name">/{cmd.name}</span>
+              <span className="command-item-desc">{cmd.description}{cmd.input?.hint ? ` · ${cmd.input.hint}` : ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="composer-bottom-bar">
         <div className="composer-bar-left">
           <button

@@ -30,7 +30,7 @@ const mockAgent: AgentSnapshot = { state: 'ready', origin: 'http://127.0.0.1:187
 
 const mockWorkbench: WorkbenchSnapshot = {
   workspaces: [
-    { id: 'ws-1', name: 'Narwhal', displayPath: '/Users/dev/narwhal-forge', lastOpenedAt: '2026-08-18T10:00:00Z' },
+    { id: 'ws-1', name: 'Narwhal', displayPath: '/Users/dev/narwhal', lastOpenedAt: '2026-08-18T10:00:00Z' },
   ],
   selectedWorkspaceId: 'ws-1',
   conversations: [
@@ -266,7 +266,7 @@ const mockConfig: AgentConfiguration = {
 const mockSettings: DesktopSettings = {
   appVersion: '0.1.0',
   runtimeVersion: '0.1.0-rc.5',
-  dataDirectory: '/Users/dev/Library/Application Support/narwhal-forge-macos',
+  dataDirectory: '/Users/dev/Library/Application Support/com.narwhal.app',
 }
 
 const listeners = {
@@ -544,6 +544,21 @@ const _mockBridge = Object.freeze({
     emitWorkbench()
     emitConversation()
     return delay(undefined)
+  },
+
+  listCommands: async () => delay([
+    { name: 'compact', description: 'Compress the conversation context to save tokens' },
+    { name: 'export', description: 'Export the current conversation as a zip file' },
+    { name: 'goal', description: 'Set a long-term goal for this conversation', input: { hint: 'Describe your goal' } },
+    { name: 'plan', description: 'Toggle plan mode — the agent will plan before acting' },
+    { name: 'permission', description: 'Show or change the operation permission preset' },
+    { name: 'feedback', description: 'Send feedback to the DeepSeek Harness team' },
+    { name: 'repo', description: 'Show git branch and recent commits (skill)', input: { hint: 'path or . for current' } },
+  ]),
+
+  executeCommand: async (line: string) => {
+    console.log('[mock] executeCommand:', line)
+    return delay({ kind: 'success' as const, text: `Command executed: ${line}` })
   },
 
   getAgentConfiguration: async () => delay(currentConfig),

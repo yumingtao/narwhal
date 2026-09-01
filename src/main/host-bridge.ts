@@ -265,12 +265,17 @@ export class HostBridge {
     if (type === 'turn/start') this.running = true
     this.emit()
   }
-  private async rpc<T>(method: 'session.list' | 'session.create' | 'session.history' | 'session.prompt' | 'session.cancel' | 'session.models' | 'session.selectModel' | 'llm.providers' | 'llm.models' | 'settings.describe' | 'settings.mutate' | 'credentials.describe' | 'credentials.set', payload: JsonRecord): Promise<T> {
+  private async rpc<T>(method: 'session.list' | 'session.create' | 'session.history' | 'session.prompt' | 'session.cancel' | 'session.models' | 'session.selectModel' | 'llm.providers' | 'llm.models' | 'settings.describe' | 'settings.mutate' | 'credentials.describe' | 'credentials.set' | 'skill.list' | 'goal.create' | 'goal.edit' | 'goal.pause' | 'goal.resume' | 'goal.complete' | 'goal.clear', payload: JsonRecord): Promise<T> {
     if (!this.origin) throw new Error('Local Agent is not ready')
     const response = await fetch(`${this.origin}/api/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }), signal: AbortSignal.timeout(30_000) })
-    if (!response.ok) throw new Error('Local Agent request failed')
+    if (!response.ok) {
+      const body = await response.text().catch(() => '')
+      throw new Error(`Local Agent HTTP ${response.status} on ${method}: ${body.slice(0, 400)}`)
+    }
     const envelope: unknown = await response.json()
-    if (!isRecord(envelope) || envelope.type !== 'server-response' || !isRecord(envelope.result) || envelope.result.ok !== true) throw new Error('Local Agent rejected the request')
+    if (!isRecord(envelope) || envelope.type !== 'server-response' || !isRecord(envelope.result) || envelope.result.ok !== true) {
+      throw new Error(`Local Agent RPC rejected ${method}: ${JSON.stringify(envelope).slice(0, 400)}`)
+    }
     return envelope.result.value as T
   }
   async listSessions(): Promise<AgentConversation> {
@@ -321,6 +326,139 @@ export class HostBridge {
     return this.snapshot()
   }
   async cancel(): Promise<void> { if (this.selectedSessionId) { await this.rpc('session.cancel', { sessionId: this.selectedSessionId }); this.running = false; this.emit() } }
+  async listCommands(): Promise<{ name: string; description: string; input?: { hint?: string; images?: boolean } }[]> {
+    // Hardcoded built-in commands (same 6 registered by dsh-command-* packages)
+    type Cmd = { name: string; description: string; input?: { hint?: string; images?: boolean } }
+    const builtin: Cmd[] = [
+      { name: 'compact', description: 'Compress the conversation context to save tokens' },
+      { name: 'export', description: 'Export the current conversation as a zip file' },
+      { name: 'goal', description: 'Manage long-term goals for this conversation', input: { hint: 'objective | clear | pause | resume' } },
+      { name: 'plan', description: 'Toggle plan mode — the agent will plan before acting' },
+      { name: 'permission', description: 'Show or change the operation permission preset', input: { hint: 'preset name' } },
+      { name: 'feedback', description: 'Send feedback to the DeepSeek Harness team' },
+    ]
+    // DSH exposes skill.list over HTTP — fetch any skills the Host currently has loaded
+    let skillList: { name: string; description: string }[] = []
+    try {
+      if (this.selectedSessionId) {
+        const value = await this.rpc<{ skills?: unknown[] }>('skill.list', { sessionId: this.selectedSessionId })
+        skillList = (value.skills ?? []).flatMap((row) => {
+          if (!isRecord(row) || typeof row.name !== 'string' || typeof row.description !== 'string') return []
+          return [{ name: row.name, description: row.description }]
+        })
+      }
+    } catch (e) { console.warn('[narwhal] skill.list failed:', e) }
+    // De-dup: builtin wins over skills with the same name
+    const seen = new Set(builtin.map((c) => c.name))
+    const result = [...builtin]
+    for (const s of skillList) if (!seen.has(s.name)) { result.push({ ...s, input: { hint: 'optional arguments' } }); seen.add(s.name) }
+    return result
+  }
+  async executeCommand(line: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    if (!this.selectedSessionId) throw new Error('Choose a conversation first')
+    // Parse "/name args..." into command name and remaining args
+    const match = line.match(/^\/([A-Za-z0-9_-]+)(?:\s*(.*))?$/s)
+    if (!match) return { kind: 'error', text: 'Invalid slash command format' }
+    const name = match[1].toLowerCase()
+    const args = (match[2] ?? '').trim()
+    const sessionId = this.selectedSessionId
+    try {
+      switch (name) {
+        case 'goal':  return this.execGoal(sessionId, args)
+        case 'compact': return { kind: 'error', text: '/compact is not available via HTTP in this build' }
+        case 'plan':    return { kind: 'error', text: '/plan is not available via HTTP in this build' }
+        case 'permission': return this.execPermission(sessionId, args)
+        case 'export': return this.execExport(sessionId)
+        case 'feedback': return { kind: 'success', text: 'Opening the DeepSeek Harness feedback page in your browser…' }
+        default: {
+          // Unknown command — could be a skill. Try to dispatch via session.prompt so the
+          // model sees it. This is a graceful degradation for future skill-loaded sessions.
+          const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+          await this.rpc<unknown>('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text: line }], clientTimeZone: timeZone })
+          this.running = true; this.emit()
+          for (const delay of [1000, 3000, 6000]) setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, delay)
+          return { kind: 'success' }
+        }
+      }
+    } catch (e) {
+      console.warn('[narwhal] executeCommand failed:', e)
+      return { kind: 'error', text: String(e) }
+    }
+  }
+  private async execGoal(sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    const control = args.toLowerCase()
+    if (!args) {
+      const current = await this.fetchCurrentGoal(sessionId)
+      if (!current) return { kind: 'success', text: 'No active goal. Use `/goal <objective>` to set one.' }
+      const phase = current.goal.phase ?? 'unknown'
+      return { kind: 'success', text: `Current goal (${phase}): "${current.goal.objective}"` }
+    }
+    if (control === 'clear' || control === 'pause' || control === 'resume') {
+      const current = await this.fetchCurrentGoal(sessionId)
+      if (!current) return { kind: 'error', text: 'No active goal to operate on.' }
+      const op = `goal.${control}` as const
+      const result = await this.rpc<{ ref?: { id: string; revision: number } }>(op, { sessionId, ref: { id: current.goal.id, revision: current.goal.revision } })
+      // pause/resume return new ref with bumped revision; clear may return empty
+      if (result?.ref) current.goal = { ...current.goal, ...result.ref }
+      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
+      return { kind: 'success', text: `Goal ${control}${control.endsWith('e') ? 'd' : 'ed'}.` }
+    }
+    if (control.startsWith('edit')) {
+      const objective = args.slice(4).trim()
+      if (!objective) return { kind: 'error', text: 'Usage: /goal edit <new objective>' }
+      const current = await this.fetchCurrentGoal(sessionId)
+      if (!current) return { kind: 'error', text: 'No active goal to edit.' }
+      const result = await this.rpc<{ ref?: { id: string; revision: number } }>('goal.edit', { sessionId, ref: { id: current.goal.id, revision: current.goal.revision }, objective })
+      if (result?.ref) current.goal = { ...current.goal, ...result.ref }
+      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
+      return { kind: 'success', text: `Goal updated: "${objective}"` }
+    }
+    // Treat remaining text as a new goal objective
+    const result = await this.rpc<{ ref?: { id: string; revision: number } }>('goal.create', { sessionId, objective: args })
+    setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
+    if (result?.ref) return { kind: 'success', text: `Goal set: "${args}" (${result.ref.id.slice(-8)})` }
+    return { kind: 'success', text: `Goal set: "${args}"` }
+  }
+  /** Fetch the current session's goal ref from the session list projection. */
+  private async fetchCurrentGoal(sessionId: string): Promise<{ goal: { id: string; revision: number; objective: string; phase?: string } } | undefined> {
+    try {
+      const list = await this.rpc<{ items?: unknown[] }>('session.list', {})
+      const items = list?.items ?? []
+      for (const raw of items) {
+        if (!isRecord(raw)) continue
+        if (raw.sessionId !== sessionId) continue
+        const projsObj = raw.projections as Record<string, unknown> | undefined
+      const projs = (projsObj && isRecord(projsObj.values) ? projsObj.values : null) as Record<string, unknown> | null
+        const goal = projs && isRecord(projs.goal) ? projs.goal : null
+        const inner = goal && isRecord(goal.goal) ? goal.goal : null
+        if (inner && typeof inner.id === 'string' && typeof inner.revision === 'number') {
+          return { goal: { id: inner.id, revision: inner.revision, objective: typeof inner.objective === 'string' ? inner.objective : '', phase: typeof inner.phase === 'string' ? inner.phase : undefined } }
+        }
+        return undefined
+      }
+    } catch { /* ignore */ }
+    return undefined
+  }
+  private async execPermission(_sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    // The setDefaultPermission path is already exposed through select-agent-model / set-default-permission IPC
+    // We can reuse it: credentials.set with the preset name. For now just show current state.
+    if (!args) {
+      return { kind: 'success', text: 'Use the permission dropdown in the composer bar to switch presets (Workspace Write, Safe, etc.).' }
+    }
+    // Map common preset aliases to the internal names used by setDefaultPermission
+    const presets = new Set<string>(['workspace-write', 'safe', 'read-only', 'full-access'])
+    if (!presets.has(args)) {
+      return { kind: 'error', text: `Unknown permission preset "${args}". Valid: workspace-write, safe, read-only, full-access.` }
+    }
+    await this.setDefaultPermission(args)
+    return { kind: 'success', text: `Permission preset set to "${args}".` }
+  }
+  private async execExport(sessionId: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    if (!this.origin) return { kind: 'error', text: 'Host not ready' }
+    const url = `${this.origin}/api/session.export?sessionId=${encodeURIComponent(sessionId)}`
+    // We can't trigger a browser download from Node. Instead return the URL and let the renderer open it.
+    return { kind: 'success', text: `Download: ${url}` }
+  }
   private async configuration(): Promise<AgentConfiguration> {
     try {
       const [providersResult, modelsResult, settingsResult, sessionModelsResult] = await Promise.allSettled([

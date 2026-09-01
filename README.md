@@ -96,7 +96,7 @@ Narwhal follows a strict security boundary between the renderer (UI) and the run
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/layout.png" alt="Narwhal Forge — Layout Overview" width="100%">
+  <img src="assets/screenshots/layout.png" alt="Narwhal — Layout Overview" width="100%">
   <sub>Main layout with conversation, plan, and activity panels.</sub>
 </p>
 
@@ -122,6 +122,157 @@ pnpm dev
 ```
 
 Development mode (`pnpm dev`) expects a DeepSeek Harness checkout adjacent to this repo at `../DeepSeek-Harness` by default. Without it, the local Agent runtime cannot start. To point elsewhere, set `DSH_RUNTIME_ROOT`. Set `DSH_NODE_EXECUTABLE` when the appropriate Node binary is not on `PATH`.
+
+## Configuration
+
+Narwhal uses a single authoritative config file that is synced to the DSH runtime before each startup.
+
+**Config file location:** `~/.config/narwhal/config.json` (override with `NARWHAL_CONFIG_DIR`)
+
+Every time Narwhal launches, it regenerates two runtime files from `config.json`:
+- `dsh-home/settings.yaml` — provider routes, default model, permission preset
+- `dsh-home/profiles/web/cordis.patch.yml` — MCP servers and skills
+
+Edit `config.json` (or use the in-app Settings UI), then restart Narwhal for changes to take effect.
+
+### Complete Example
+
+```jsonc
+{
+  "version": 1,
+  "theme": "auto",
+  "defaultModel": {
+    "provider": "deepseek",
+    "model": "deepseek-chat"
+  },
+  "agent": {
+    "preset": "standard",
+    "permissionLevel": "workspace-write"
+  },
+  "providers": {
+    "deepseek": {
+      "displayName": "DeepSeek",
+      "api": "openai-completions",
+      "baseURL": "https://api.deepseek.com/v1",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "models": [
+        { "id": "deepseek-chat", "contextWindow": 128000, "reasoningEfforts": ["low", "medium", "high"] },
+        { "id": "deepseek-reasoner", "contextWindow": 64000, "reasoningEfforts": ["low", "medium", "high"] }
+      ]
+    },
+    "anthropic": {
+      "displayName": "Anthropic",
+      "api": "messages",
+      "baseURL": "https://api.anthropic.com",
+      "apiKeyEnv": "ANTHROPIC_API_KEY",
+      "headers": { "anthropic-version": "2023-06-01" },
+      "models": [
+        { "id": "claude-sonnet-4-20250514", "contextWindow": 200000, "reasoningEfforts": ["low", "medium", "high"] }
+      ]
+    }
+  },
+  "skills": {
+    "enabled": true,
+    "customDirs": ["~/my-skills", "./.narwhal/skills"]
+  },
+  "mcpServers": [
+    {
+      "serverName": "filesystem",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/YMINGTA/projects"],
+      "toolCallTimeoutMs": 60000,
+      "failOnStartupError": false
+    },
+    {
+      "serverName": "github",
+      "transport": "streamable-http",
+      "url": "https://mcp.example.com/github",
+      "headers": { "Authorization": "{env:GITHUB_TOKEN}" },
+      "toolCallTimeoutMs": 30000
+    }
+  ]
+}
+```
+
+### API Keys
+
+Narwhal never stores plaintext API keys in `config.json`. Provider credentials are referenced by environment variable name via `apiKeyEnv`:
+
+```jsonc
+"providers": {
+  "my-provider": {
+    "apiKeyEnv": "MY_PROVIDER_API_KEY"
+  }
+}
+```
+
+MCP server headers can also use the `{env:VAR_NAME}` pattern to keep secrets out of config files:
+
+```jsonc
+"headers": { "Authorization": "{env:GITHUB_TOKEN}" }
+```
+
+The required env vars are automatically passed through to the DSH runtime process. Export them in your shell profile, GUI session manager, or set them via Narwhal's Settings UI (they are still stored in the OS keychain, never in config.json).
+
+### MCP Servers
+
+Narwhal supports both MCP transports. Each server becomes one `dsh-mcp-client` plugin entry in the generated `cordis.patch.yml`.
+
+**stdio transport** — spawns a local process:
+
+```jsonc
+{
+  "serverName": "brave-search",
+  "transport": "stdio",
+  "command": "node",
+  "args": ["/path/to/brave-mcp-server/index.js"],
+  "env": { "BRAVE_API_KEY": "{env:BRAVE_API_KEY}" },
+  "cwd": "/path/to/brave-mcp-server",
+  "toolCallTimeoutMs": 120000,
+  "failOnStartupError": false
+}
+```
+
+**streamable-http transport** — connects to a remote MCP endpoint:
+
+```jsonc
+{
+  "serverName": "datadog",
+  "transport": "streamable-http",
+  "url": "https://mcp.datadoghq.com/v1",
+  "headers": { "DD_API_KEY": "{env:DD_API_KEY}" },
+  "toolCallTimeoutMs": 60000,
+  "failOnStartupError": true
+}
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `toolCallTimeoutMs` | `60000` | Maximum milliseconds per tool call |
+| `failOnStartupError` | `false` | If `true`, the Agent aborts when this server fails to start; if `false`, the server is skipped silently |
+
+### Skills
+
+Narwhal's skill system is disabled by default. Enable it to give the Agent persistent skill packs from bundled and custom directories:
+
+```jsonc
+"skills": {
+  "enabled": true,
+  "customDirs": ["~/narwhal-skills", "./.dsh/skills"],
+  "bundledDir": "/opt/narwhal/skills"
+}
+```
+
+| Field | Description |
+| --- | --- |
+| `enabled` | Enable skill loading. When `true`, Narwhal writes three DSH plugin entries (`skill-filesystem`, `tool-skill`, `skill-badge`) into `cordis.patch.yml`. |
+| `customDirs` | Absolute paths to additional skill directories that will be scanned. Each directory should contain folders named after individual skills, with a `SKILL.md` at the root of each folder. |
+| `bundledDir` | Optional path to a bundled skill directory distributed alongside Narwhal itself. |
+
+### Configuration Schema
+
+Narwhal uses Zod to validate `config.json` on every load. See [`src/shared/config-schema.ts`](src/shared/config-schema.ts) for the authoritative schema and [`src/main/dsh-sync.ts`](src/main/dsh-sync.ts) for the exact `settings.yaml` and `cordis.patch.yml` builders.
 
 ## Development
 

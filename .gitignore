@@ -32,6 +32,9 @@ Desktop.ini
 
 # Runtime data
 runtime/dsh/node_modules/
+runtime/dsh/package.json
+runtime/dsh/pnpm-lock.yaml
+runtime/dsh/pnpm-workspace.yaml
 
 # Development screenshots (use assets/screenshots/ for README images)
 output/playwright/

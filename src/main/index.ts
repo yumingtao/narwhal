@@ -8,15 +8,8 @@ import type { AgentConfiguration, AgentConversation, AgentSnapshot, Conversation
 import { createHostSupervisor, type HostGeneration } from './host-supervisor.js'
 import { HostBridge } from './host-bridge.js'
 import { resolveRuntime, type DshRuntime } from './runtime.js'
-import { loadConfig, getConfig, getLoadError, saveConfig, getConfigPath } from './config.js'
-import { resolveProviderOptions } from '../shared/config-schema.js'
+import { loadConfig, getConfig, getLoadError, saveConfig, getConfigPath, syncToDsh, getDshHome } from './config.js'
 
-// Keep reading the existing local workbench after renaming the package from
-// narwhal-forge-macos to narwhal. A future data-directory migration can move
-// this deliberately, rather than making current sessions appear to vanish.
-// An explicit user-data directory remains available for tests and diagnostics.
-const hasCustomUserDataDirectory = process.argv.some((argument) => argument === '--user-data-dir' || argument.startsWith('--user-data-dir='))
-if (!hasCustomUserDataDirectory) app.setPath('userData', join(app.getPath('appData'), 'narwhal-forge-macos'))
 protocol.registerSchemesAsPrivileged([{ scheme: 'narwhal', privileges: { secure: true, standard: true, supportFetchAPI: true } }])
 const recoveryUrl = new URL('../recovery/index.html', import.meta.url).toString()
 const appPath = fileURLToPath(new URL('../renderer/index.html', import.meta.url))
@@ -68,9 +61,9 @@ const isRecoverySender = (event: Electron.IpcMainInvokeEvent) => event.senderFra
 const sender = (event: Electron.IpcMainInvokeEvent, allowRecovery = false) => { if (!isAppSender(event) && !(allowRecovery && isRecoverySender(event))) throw new Error('Operation rejected for an untrusted renderer') }
 const asRecord = (value: unknown): Record<string, unknown> => { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid request'); return value as Record<string, unknown> }
 const asString = (value: unknown, field: string, max = 500): string => { if (typeof value !== 'string') throw new Error(`Invalid ${field}`); const text = value.trim(); if (!text || text.length > max) throw new Error(`Invalid ${field}`); return text }
-const emitAgent = () => windowRef?.webContents.send('narwhal:agent-state', agent)
-const emitConversation = (conversation: AgentConversation) => windowRef?.webContents.send('narwhal:conversation', conversation)
-const emitWorkbench = (workbench: WorkbenchSnapshot) => windowRef?.webContents.send('narwhal:workbench', workbench)
+const emitAgent = () => { if (windowRef && !windowRef.isDestroyed()) windowRef.webContents.send('narwhal:agent-state', agent) }
+const emitConversation = (conversation: AgentConversation) => { if (windowRef && !windowRef.isDestroyed()) windowRef.webContents.send('narwhal:conversation', conversation) }
+const emitWorkbench = (workbench: WorkbenchSnapshot) => { if (windowRef && !windowRef.isDestroyed()) windowRef.webContents.send('narwhal:workbench', workbench) }
 function scheduleWorkbenchRefresh(): void {
   if (workbenchRefreshTimer !== undefined) return
   workbenchRefreshTimer = setTimeout(() => {
@@ -81,32 +74,40 @@ function scheduleWorkbenchRefresh(): void {
 
 function safeEnvironment(dshHome: string): NodeJS.ProcessEnv {
   const inherited = process.env
-  const configEnv: Record<string, string> = {}
-  // Resolve {env:VAR_NAME} references from config providers and inject as env vars.
-  // DSH runtime reads these from its own environment, not the parent process.
   const cfg = getConfig()
-  for (const [providerId, providerCfg] of Object.entries(cfg.providers ?? {})) {
-    if (!providerCfg.enabled) continue
-    const resolved = resolveProviderOptions(providerCfg.options)
-    if (resolved.apiKey) {
-      // Derive the env var name from the provider ID (e.g. deepseek → DEEPSEEK_API_KEY)
-      const envName = providerId.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase() + '_API_KEY'
-      configEnv[envName] = resolved.apiKey
+
+  // Collect env var names that DSH will need. Each provider declares which
+  // env var holds its API key via apiKeyEnv. MCP servers may also reference
+  // env vars in their config (headers.env).
+  const requiredEnvNames = new Set<string>()
+  for (const providerCfg of Object.values(cfg.providers ?? {})) {
+    if (providerCfg.apiKeyEnv) requiredEnvNames.add(providerCfg.apiKeyEnv)
+  }
+  for (const server of cfg.mcpServers ?? []) {
+    if (server.transport === 'stdio' && server.env) {
+      for (const key of Object.keys(server.env)) requiredEnvNames.add(key)
     }
-    if (resolved.baseURL) {
-      const envName = providerId.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase() + '_BASE_URL'
-      configEnv[envName] = resolved.baseURL
+    if (server.transport === 'streamable-http' && server.headers) {
+      for (const val of Object.values(server.headers)) {
+        const m = val.match(/^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/u)
+        if (m) requiredEnvNames.add(m[1])
+      }
     }
   }
+
+  const passThrough: Record<string, string> = {}
+  for (const name of requiredEnvNames) {
+    const val = inherited[name]
+    if (val) passThrough[name] = val
+  }
+
   return {
     HOME: inherited.HOME,
     PATH: inherited.PATH,
     TMPDIR: inherited.TMPDIR,
     LANG: inherited.LANG,
     LC_ALL: inherited.LC_ALL,
-    DEEPSEEK_API_KEY: inherited.DEEPSEEK_API_KEY ?? configEnv.DEEPSEEK_API_KEY,
-    DEEPSEEK_BASE_URL: inherited.DEEPSEEK_BASE_URL ?? configEnv.DEEPSEEK_BASE_URL,
-    ...configEnv,
+    ...passThrough,
     DSH_HOME: dshHome,
     DSH_TELEMETRY_DISABLED: '1',
     ...(app.isPackaged && { ELECTRON_RUN_AS_NODE: '1' }),
@@ -115,17 +116,16 @@ function safeEnvironment(dshHome: string): NodeJS.ProcessEnv {
 
 async function persist(): Promise<void> {
   const temporary = `${storePath}.${process.pid}.${randomUUID()}.tmp`
-  await mkdir(join(app.getPath('userData'), 'narwhal-forge'), { recursive: true, mode: 0o700 })
   await writeFile(temporary, JSON.stringify(store, null, 2), { encoding: 'utf8', mode: 0o600 })
   await rename(temporary, storePath)
 }
 async function loadStore(): Promise<void> {
-  storePath = join(app.getPath('userData'), 'narwhal-forge', 'workbench.json')
+  storePath = join(app.getPath('userData'), 'workbench.json')
   try { const parsed = JSON.parse(await readFile(storePath, 'utf8')) as Store; if (parsed.version === 1 && Array.isArray(parsed.workspaces)) store = parsed } catch { /* Fresh local workbench. */ }
 }
 const selected = (): StoredWorkspace | undefined => store.workspaces.find((item) => item.id === store.selectedWorkspaceId)
 const workspaceSummary = (item: StoredWorkspace): Workspace => ({ id: item.id, name: item.name, displayPath: item.path, lastOpenedAt: item.lastOpenedAt })
-const desktopSettings = (): DesktopSettings => ({ appVersion: app.getVersion(), runtimeVersion: selectedRuntime?.manifest.dshVersion ?? 'Unavailable', dataDirectory: join(app.getPath('userData'), 'narwhal-forge') })
+const desktopSettings = (): DesktopSettings => ({ appVersion: app.getVersion(), runtimeVersion: selectedRuntime?.manifest.dshVersion ?? 'Unavailable', dataDirectory: app.getPath('userData') })
 
 function git(cwd: string, args: string[]): Promise<string> {
   return new Promise((resolveOutput) => {
@@ -230,6 +230,8 @@ function registerIpc(): void {
   ipcMain.handle('narwhal:select-session', async (event, raw) => { sender(event); const workspace = requireWorkspace(); const sessionId = asString(asRecord(raw).sessionId, 'sessionId', 140); const conversation = await hostBridge.selectSession(sessionId, workspace.path); workspace.selectedSessionId = sessionId; await persist(); return conversation })
   ipcMain.handle('narwhal:send-prompt', async (event, raw) => { sender(event); const workspace = requireWorkspace(); const value = asRecord(raw); const rawText = typeof value.text === 'string' ? value.text.trim() : ''; const rawAttachments = Array.isArray(value.attachments) ? value.attachments : undefined; const attachments: { id: string; name: string; size: number; type: string }[] = []; if (rawAttachments) { for (const att of rawAttachments) { if (!att || typeof att !== 'object') continue; const obj = att as Record<string, unknown>; if (typeof obj.id !== 'string' || typeof obj.name !== 'string') continue; attachments.push({ id: obj.id, name: obj.name, size: typeof obj.size === 'number' ? obj.size : 0, type: typeof obj.type === 'string' ? obj.type : '' }) } } const hasText = rawText.length > 0; const hasAttachments = attachments.length > 0; if (!hasText && !hasAttachments) throw new Error('Message or attachment required'); if (rawText.length > 12_000) throw new Error('Message too long'); const conversation = await hostBridge.prompt(rawText, hasAttachments ? attachments : undefined); workspace.selectedSessionId = conversation.selectedSessionId; await persist(); return conversation })
   ipcMain.handle('narwhal:cancel-prompt', async (event) => { sender(event); await hostBridge.cancel() })
+  ipcMain.handle('narwhal:list-commands', async (event) => { sender(event); await hostBridge.listSessions(); return hostBridge.listCommands() })
+  ipcMain.handle('narwhal:execute-command', async (event, raw) => { sender(event); const line = asString(asRecord(raw).line, 'command line', 1000); return hostBridge.executeCommand(line) })
   ipcMain.handle('narwhal:get-agent-configuration', async (event): Promise<AgentConfiguration> => { sender(event); return hostBridge.getConfiguration() })
   ipcMain.handle('narwhal:select-agent-model', async (event, raw): Promise<AgentConfiguration> => { sender(event); const value = asRecord(raw); return hostBridge.selectModel(asString(value.provider, 'provider', 120), asString(value.model, 'model', 160), value.reasoningEffort === undefined ? undefined : asString(value.reasoningEffort, 'reasoning effort', 100)) })
   ipcMain.handle('narwhal:set-default-permission', async (event, raw): Promise<AgentConfiguration> => { sender(event); return hostBridge.setDefaultPermission(asString(asRecord(raw).preset, 'permission preset', 100)) })
@@ -279,11 +281,16 @@ async function bootstrap(): Promise<void> {
   registerNarwhalProtocol(); await loadStore(); await loadConfig()
   const cfg = getConfig(); if (getLoadError()) console.warn('[narwhal] config warning:', getLoadError())
   console.log('[narwhal] bootstrap: config loaded from', getConfigPath(), 'theme:', cfg.theme, 'defaultModel:', cfg.defaultModel)
-  const dshHome = join(app.getPath('userData'), 'dsh-home'); await mkdir(dshHome, { recursive: true, mode: 0o700 }); selectedRuntime = resolveRuntime()
-  console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry)
+  // Register IPC handlers EARLY — before any operation that might throw.
+  // Otherwise a pre-register crash leaves the renderer with no bridge.
+  registerIpc(); console.log('[narwhal] bootstrap: IPC handlers registered')
+  const dshHome = join(app.getPath('userData'), 'dsh-home')
+  try { await mkdir(dshHome, { recursive: true, mode: 0o700 }) } catch (e) { console.warn('[narwhal] dsh-home mkdir failed:', e instanceof Error ? e.message : String(e)) }
+  try { selectedRuntime = resolveRuntime(); console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry) } catch (e) { console.error('[narwhal] bootstrap: resolveRuntime FAILED:', e instanceof Error ? e.message : String(e)); throw e }
+  try { await syncToDsh() } catch (e) { console.error('[narwhal] syncToDsh failed (non-fatal):', e instanceof Error ? e.message : String(e)) }
   activeSupervisor = createHostSupervisor(() => spawn(app.isPackaged ? process.execPath : (process.env.DSH_NODE_EXECUTABLE ?? 'node'), [...selectedRuntime!.launchArguments, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
   hostBridge.subscribe((conversation) => { emitConversation(conversation); scheduleWorkbenchRefresh() })
-  registerIpc(); tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-tray.png')).resize({ width: 18, height: 18 })); tray.setToolTip('Narwhal'); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show Narwhal', click: () => windowRef?.show() }, { label: 'Quit', click: () => app.quit() }])); tray.on('click', () => windowRef?.show())
+  tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-tray.png')).resize({ width: 18, height: 18 })); tray.setToolTip('Narwhal'); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show Narwhal', click: () => windowRef?.show() }, { label: 'Quit', click: () => app.quit() }])); tray.on('click', () => windowRef?.show())
   console.log('[narwhal] bootstrap: loading app URL:', appUrl)
   await loadApp();
   console.log('[narwhal] bootstrap: app loaded, starting host...')

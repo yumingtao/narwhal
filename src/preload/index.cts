@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, NarwhalConfig, WorkbenchSnapshot } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, Command, CommandResult, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, NarwhalConfig, WorkbenchSnapshot } from '../shared/desktop-contract.js'
 
 const invoke = <T,>(channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload) as Promise<T>
 const bridge: NarwhalBridge = Object.freeze({
@@ -25,6 +25,8 @@ const bridge: NarwhalBridge = Object.freeze({
     return invoke<AgentConversation>('narwhal:send-prompt', { text, attachments: meta })
   },
   cancelPrompt: () => invoke<void>('narwhal:cancel-prompt'),
+  listCommands: () => invoke<readonly Command[]>('narwhal:list-commands'),
+  executeCommand: (line: string) => invoke<CommandResult>('narwhal:execute-command', { line }),
   getAgentConfiguration: () => invoke<AgentConfiguration>('narwhal:get-agent-configuration'),
   selectAgentModel: (input: { provider: string; model: string; reasoningEffort?: string }) => invoke<AgentConfiguration>('narwhal:select-agent-model', input),
   setDefaultPermission: (preset: string) => invoke<AgentConfiguration>('narwhal:set-default-permission', { preset }),

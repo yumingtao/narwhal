@@ -1,0 +1,127 @@
+name: Track DSH Updates
+
+on:
+  schedule:
+    # Daily at 09:00 CET (00:00 UTC)
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-and-bump:
+    name: Check @deepseek-ai/dsh for new releases
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Resolve upstream npm latest
+        id: upstream
+        run: |
+          VERSION=$(pnpm view @deepseek-ai/dsh dist-tags.latest 2>/dev/null)
+          if [ -z "$VERSION" ]; then
+            echo "Failed to resolve upstream version"
+            exit 1
+          fi
+          echo "latest npm version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve current locked version
+        id: current
+        run: |
+          LOCKED=$(node -p "require('./package.json').dshRuntime" | sed 's/^npm@//')
+          if [ -z "$LOCKED" ]; then
+            LOCKED=$(node -p "require('./runtime/manifest.json').dshVersion")
+          fi
+          echo "locked version: $LOCKED"
+          echo "locked=$LOCKED" >> "$GITHUB_OUTPUT"
+
+      - name: Compare versions
+        id: compare
+        run: |
+          UPSTREAM="${{ steps.upstream.outputs.version }}"
+          LOCKED="${{ steps.current.outputs.locked }}"
+          echo "Comparing locked=$LOCKED vs upstream=$UPSTREAM"
+          if [ "$UPSTREAM" = "$LOCKED" ]; then
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=outdated" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log result
+        run: |
+          STATUS="${{ steps.compare.outputs.status }}"
+          if [ "$STATUS" = "up-to-date" ]; then
+            echo "✅ DSH runtime is already at latest. Nothing to do."
+          else
+            echo "🔔 New version available!"
+            echo "  Locked:   ${{ steps.current.outputs.locked }}"
+            echo "  Upstream: ${{ steps.upstream.outputs.version }}"
+          fi
+
+      - name: Update package.json and manifest
+        if: steps.compare.outputs.status == 'outdated'
+        run: |
+          NEW="${{ steps.upstream.outputs.version }}"
+
+          # package.json — update dshRuntime field
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.dshRuntime = 'npm@${NEW}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+          # runtime/manifest.json — update dshVersion
+          if [ -f runtime/manifest.json ]; then
+            node -e "
+              const fs = require('fs');
+              const mf = JSON.parse(fs.readFileSync('runtime/manifest.json', 'utf8'));
+              mf.dshVersion = '${NEW}';
+              fs.writeFileSync('runtime/manifest.json', JSON.stringify(mf, null, 2) + '\n');
+            "
+          fi
+
+          git diff
+
+      - name: Create Pull Request
+        if: steps.compare.outputs.status == 'outdated'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(dsh): bump runtime to ${{ steps.upstream.outputs.version }}"
+          branch: "chore/bump-dsh-${{ steps.upstream.outputs.version }}"
+          title: "chore(dsh): bump runtime to ${{ steps.upstream.outputs.version }}"
+          body: |
+            Automated update of bundled [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) runtime.
+
+            | Field | Value |
+            |-------|-------|
+            | Locked (before) | `${{ steps.current.outputs.locked }}` |
+            | Upstream latest | `${{ steps.upstream.outputs.version }}` |
+            | Source | `@deepseek-ai/dsh` npm dist-tag `latest` |
+
+            **To verify**:
+            \`\`\`bash
+            DSH_RUNTIME_SOURCE=npm@${{ steps.upstream.outputs.version }} pnpm run stage:runtime
+            pnpm run build
+            pnpm run package:mac
+            \`\`\`
+
+            _Opened by `dsh-track.yml` scheduled workflow._
+          labels: |
+            automated
+            dependencies
+            dsh-runtime
+          reviewers: yumingtao

@@ -42,6 +42,8 @@ export interface ProviderSetting { readonly id: string; readonly name: string; r
 export interface CustomProviderCapability { readonly available: boolean; readonly protocols: readonly string[]; readonly reason?: string }
 export interface AgentConfiguration { readonly available: boolean; readonly writable: boolean; readonly providers: readonly ProviderSetting[]; readonly models: readonly ModelProvider[]; readonly defaultPermission?: string; readonly permissionOptions: readonly { readonly id: string; readonly label: string }[]; readonly customProvider: CustomProviderCapability; readonly selectedModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }; readonly error?: string }
 export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean }
+export interface Command { readonly name: string; readonly description: string; readonly input?: { readonly hint?: string; readonly images?: boolean } }
+export interface CommandResult { readonly kind: 'success' | 'error'; readonly text?: string }
 export interface NarwhalBridge {
   bootstrap(): Promise<{ readonly agent: AgentSnapshot; readonly workbench: WorkbenchSnapshot; readonly settings: DesktopSettings; readonly config: NarwhalConfig; readonly configLoadError?: string }>
   chooseWorkspace(): Promise<WorkbenchSnapshot>
@@ -62,6 +64,8 @@ export interface NarwhalBridge {
   selectSession(sessionId: string): Promise<AgentConversation>
   sendPrompt(text: string, attachments?: readonly Attachment[]): Promise<AgentConversation>
   cancelPrompt(): Promise<void>
+  listCommands(): Promise<readonly Command[]>
+  executeCommand(line: string): Promise<CommandResult>
   getAgentConfiguration(): Promise<AgentConfiguration>
   selectAgentModel(input: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }): Promise<AgentConfiguration>
   setDefaultPermission(preset: string): Promise<AgentConfiguration>

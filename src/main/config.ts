@@ -3,23 +3,18 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
-import { configSchema, defaultConfig, generateConfigTemplate, type NarwhalConfig } from '../shared/config-schema.js'
+import { configSchema, defaultConfig, type NarwhalConfig, CONFIG_VERSION } from '../shared/config-schema.js'
+import { migrateFromDsh, syncDshConfig } from './dsh-sync.js'
 
-// ── Config path ─────────────────────────────────────────────────────────────
+// ── Paths ──────────────────────────────────────────────────────────────────
 
-/**
- * Resolve the narwhal config directory.
- *
- * Production: ~/.config/narwhal/config.json  (XDG-style)
- * Dev (--user-data-dir set): <userData>/config.json
- *
- * We use XDG-style so the config is user-visible and can be shared across
- * machines via dotfiles, independent of the Electron app's own userData
- * directory (which stores session/workbench state).
- */
 export function getConfigPath(): string {
   const configDir = process.env.NARWHAL_CONFIG_DIR ?? join(homedir(), '.config', 'narwhal')
   return join(configDir, 'config.json')
+}
+
+export function getDshHome(): string {
+  return join(app.getPath('userData'), 'dsh-home')
 }
 
 // ── Singleton store ─────────────────────────────────────────────────────────
@@ -41,17 +36,32 @@ export async function loadConfig(): Promise<NarwhalConfig> {
   const configPath = getConfigPath()
 
   try {
-    if (!existsSync(configPath)) {
-      await ensureConfigCreated(configPath)
-      cachedConfig = { ...defaultConfig }
+    // First run: migrate from DSH settings.yaml → config.json
+    const configExists = existsSync(configPath)
+    if (!configExists) {
+      const dshHome = getDshHome()
+      const migrated = await migrateFromDsh(configPath, dshHome)
+      cachedConfig = migrated
       loadError = undefined
       return cachedConfig
     }
 
+    // Existing config — load and validate
     const raw = await readFile(configPath, 'utf-8')
     const parsed = JSON.parse(raw)
-    const result = configSchema.safeParse(parsed)
 
+    // Old v1 or unversioned config → also needs migration (merge with DSH)
+    const isLegacy = !parsed.version || (parsed.version !== CONFIG_VERSION)
+
+    if (isLegacy) {
+      const dshHome = getDshHome()
+      const migrated = await migrateFromDsh(configPath, dshHome)
+      cachedConfig = migrated
+      loadError = undefined
+      return cachedConfig
+    }
+
+    const result = configSchema.safeParse(parsed)
     if (!result.success) {
       loadError = `Config validation failed: ${result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`
       cachedConfig = { ...defaultConfig }
@@ -90,17 +100,24 @@ export async function saveConfig(patch: Partial<NarwhalConfig>): Promise<Narwhal
     if (!existsSync(configDir)) await mkdir(configDir, { recursive: true })
     await writeFile(configPath, JSON.stringify(cachedConfig, null, 2) + '\n', 'utf-8')
   } catch (error) {
-    // Non-fatal: in-memory state is authoritative. Write failure can happen in
-    // sandboxed environments (e.g. restricted userData dir) or read-only filesystems.
     console.warn('[narwhal] saveConfig: failed to persist to disk:', error instanceof Error ? error.message : String(error))
   }
   return cachedConfig
 }
 
-// ── Internal helpers ────────────────────────────────────────────────────────
+// ── Sync to DSH ────────────────────────────────────────────────────────────
 
-async function ensureConfigCreated(configPath: string): Promise<void> {
-  const configDir = join(configPath, '..')
-  if (!existsSync(configDir)) await mkdir(configDir, { recursive: true })
-  await writeFile(configPath, JSON.stringify(defaultConfig, null, 2) + '\n', 'utf-8')
+/**
+ * After loadConfig(), call this to regenerate DSH's settings.yaml and
+ * cordis.patch.yml from the authoritative config.json.
+ * Must run BEFORE the DSH process is spawned.
+ */
+export async function syncToDsh(): Promise<void> {
+  const cfg = getConfig()
+  const configPath = getConfigPath()
+  const dshHome = getDshHome()
+  const result = await syncDshConfig(cfg, configPath, dshHome)
+  console.log(`[narwhal] syncDshConfig: ${result.providerCount} providers, ${result.mcpCount} MCP servers, skills=${result.skillsEnabled ? 'enabled' : 'disabled'}`)
+  console.log(`[narwhal]   → ${result.settingsYaml}`)
+  console.log(`[narwhal]   → ${result.cordisPatchYaml}`)
 }

@@ -4,11 +4,107 @@ import { cp, lstat, mkdir, readdir, readFile, realpath, rm, writeFile } from 'no
 import { dirname, join, relative, resolve, sep } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
-const source = resolve(process.env.DSH_RUNTIME_SOURCE ?? join(root, '..', 'DeepSeek-Harness'))
 const target = resolve(root, 'runtime/dsh')
+const runtimeManifestPath = join(root, 'runtime', 'manifest.json')
+const textSuffixes = ['.cjs', '.js', '.json', '.map', '.mjs']
+
+// ── Entry: detect source mode ────────────────────────────────────────────────
+const sourceArg = process.env.DSH_RUNTIME_SOURCE ?? ''
+
+if (sourceArg.startsWith('npm@')) {
+  // npm mode: install @deepseek-ai/dsh from the public npm registry
+  const version = sourceArg.slice(4).trim() // "npm@0.1.1-rc.2" → "0.1.1-rc.2"
+  await stageFromNpm(version)
+  process.exit(0)
+}
+
+// Legacy: source mode — default when DSH_RUNTIME_SOURCE is empty or a local path
+const source = resolve(sourceArg || join(root, '..', 'DeepSeek-Harness'))
 const stageName = 'desktop-runtime-staging'
 const stageDirectory = join(source, 'apps', stageName)
-const textSuffixes = ['.cjs', '.js', '.json', '.map', '.mjs']
+
+// ── npm-mode runtime staging ─────────────────────────────────────────────────
+async function stageFromNpm(version) {
+  console.log(`[narwhal] staging DSH runtime from npm: @deepseek-ai/dsh@${version}`)
+
+  await rm(target, { recursive: true, force: true })
+  await mkdir(target, { recursive: true })
+
+  // 1. Initialize a minimal package.json + install with hoisted modules
+  await writeFile(join(target, 'package.json'), JSON.stringify({
+    name: 'narwhal-dsh-runtime',
+    version: '0.0.0',
+    private: true,
+    type: 'module',
+    dependencies: {
+      '@deepseek-ai/dsh': version,
+    },
+  }, null, 2) + '\n')
+
+  await runInDir(target, 'pnpm', [
+    'install',
+    '--no-frozen-lockfile',
+    '--ignore-workspace',      // don't inherit parent narwhal pnpm-workspace.yaml
+    '--ignore-scripts',        // skip native builds (node-pty, koffi etc.)
+    '--shamefully-hoist=true', // hoist ALL transitive deps to top-level node_modules
+  ])
+
+  // 2. Prune unused heavy dependencies (codex, claude SDK, telemetry)
+  const nodeModules = join(target, 'node_modules')
+  await pruneUnusedDependencies(nodeModules)
+
+  // 3. Resolve the actual installed version from node_modules
+  const dshPkg = JSON.parse(await readFile(join(nodeModules, '@deepseek-ai', 'dsh', 'package.json'), 'utf8'))
+  const pkgVersion = dshPkg.version
+
+  // 4. Verify critical entry points exist
+  const entry = join(nodeModules, '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+  const frontend = join(nodeModules, '@deepseek-ai', 'dsh-web-frontend', 'dist', 'index.html')
+  if (!existsSync(entry) || !existsSync(frontend)) {
+    throw new Error(`Staged runtime is incomplete.\n  bin.js: ${existsSync(entry) ? 'OK' : 'MISSING'}\n  frontend: ${existsSync(frontend) ? 'OK' : 'MISSING'}`)
+  }
+  console.log(`  bin.js:      ${relative(target, entry)}`)
+  console.log(`  frontend:    ${relative(target, frontend)}`)
+
+  // 5. Update manifest.json with the resolved version
+  await updateManifest(pkgVersion)
+  console.log(`[narwhal] DSH runtime staged at ${target} (v${pkgVersion})`)
+}
+
+async function updateManifest(dshVersion) {
+  if (!existsSync(runtimeManifestPath)) return
+  const manifest = JSON.parse(await readFile(runtimeManifestPath, 'utf8'))
+  if (manifest.dshVersion === dshVersion) return // no change
+  manifest.dshVersion = dshVersion
+  await writeFile(runtimeManifestPath, JSON.stringify(manifest, null, 2) + '\n')
+  console.log(`  manifest.json → dshVersion = ${dshVersion}`)
+}
+
+function runInDir(dir, command, args) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(command, args, { cwd: dir, env: { ...process.env, CI: 'true', NPM_CONFIG_AUDIT: 'false', NPM_CONFIG_FUND: 'false' }, stdio: 'inherit' })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolveRun()
+      else reject(new Error(`npm staging failed (${code === null ? `signal ${String(signal)}` : `exit ${String(code)}`}): ${command} ${args.join(' ')}`))
+    })
+  })
+}
+
+function runCapture(command, args, dir) {
+  return new Promise((resolveRun, reject) => {
+    let stdout = ''
+    let stderr = ''
+    const child = spawn(command, args, { cwd: dir, env: process.env })
+    child.stdout.on('data', (d) => { stdout += d.toString() })
+    child.stderr.on('data', (d) => { stderr += d.toString() })
+    child.once('error', reject)
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolveRun({ stdout, stderr })
+      else reject(new Error(`${command} ${args.join(' ')} failed (${code ?? signal}): ${stderr}`))
+    })
+  })
+}
 
 function run(command, args) {
   return new Promise((resolveRun, reject) => {
