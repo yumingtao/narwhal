@@ -1,5 +1,5 @@
-import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { existsSync, unlinkSync } from 'node:fs'
+import { mkdir, readFile, writeFile, symlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import yaml from 'yaml'
 import {
@@ -119,17 +119,44 @@ export interface SyncResult {
  * node_modules so it can be referenced by bare module specifier in
  * cordis.patch.yml. Safe to call every startup (idempotent).
  *
+ * This writes two locations because Node.js resolves bare specifiers from
+ * the DSH profile's cwd (profiles/web) via parent-directory walk, which
+ * stops at the project root boundary — it never reaches runtimeRoot. DSH's
+ * healProfiles places a flat symlink fallback at profiles/node_modules/
+ * but we're an external @narwhal/* package that healProfiles does not know
+ * about, so we must create that symlink ourselves.
+ *
  * @param runtimeRoot  path to the DSH runtime (from resolveRuntime())
- * @returns true if plugin was written, false if runtimeRoot not supplied
+ * @param dshHome      DSH_HOME directory — used to create the profiles/
+ *                     node_modules symlink that Node.js needs
+ * @returns true if plugin was deployed (or already present), false on error
  */
-export async function deployNarwhalCommandsPlugin(runtimeRoot?: string): Promise<boolean> {
+export async function deployNarwhalCommandsPlugin(runtimeRoot?: string, dshHome?: string): Promise<boolean> {
   if (!runtimeRoot) return false
   const pluginDir = join(runtimeRoot, 'node_modules', '@narwhal', 'narwhal-commands')
   try {
+    // 1. Write plugin files into the runtime's node_modules/@narwhal/
     await mkdir(pluginDir, { recursive: true })
     await writeFile(join(pluginDir, 'package.json'), NARWHAL_COMMANDS_PKG_JSON, 'utf-8')
     await writeFile(join(pluginDir, 'index.js'), NARWHAL_COMMANDS_PLUGIN_CODE, 'utf-8')
     console.log('[narwhal] deployed narwhal-commands plugin →', pluginDir)
+
+    // 2. Symlink into profiles/node_modules/@narwhal/ so Node.js can resolve
+    //    "@narwhal/narwhal-commands" from inside profiles/web.
+    if (dshHome) {
+      const profilesNodeModules = join(dshHome, 'profiles', 'node_modules')
+      const narwhalScope = join(profilesNodeModules, '@narwhal')
+      const profilesLink = join(narwhalScope, 'narwhal-commands')
+      await mkdir(narwhalScope, { recursive: true })
+      // Remove stale symlink or file if any — we want the link to point at the
+      // canonical runtime location so updates propagate instantly.
+      if (existsSync(profilesLink)) {
+        try { unlinkSync(profilesLink) } catch { /* race — let symlink below handle it */ }
+      }
+      await symlink(pluginDir, profilesLink)
+      console.log('[narwhal] symlinked →', profilesLink, '→', pluginDir)
+    }
+
     return true
   } catch (err) {
     console.warn('[narwhal] failed to deploy narwhal-commands plugin:', err instanceof Error ? err.message : String(err))
@@ -156,7 +183,8 @@ export async function syncDshConfig(
   const patchPath = join(dshHome, 'profiles', 'web', 'cordis.patch.yml')
 
   // 1. Deploy the narwhal-commands cordis plugin into runtime node_modules
-  const pluginDeployed = await deployNarwhalCommandsPlugin(runtimeRoot)
+  //    and symlink into profiles/node_modules/@narwhal/ so Node.js resolves it
+  const pluginDeployed = await deployNarwhalCommandsPlugin(runtimeRoot, dshHome)
 
   // 2. Build config files (patch.yml will include the plugin entry below)
   const settingsContent = buildSettingsYaml(config, configPath)
