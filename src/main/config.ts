@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { configSchema, defaultConfig, type NarwhalConfig, CONFIG_VERSION } from '../shared/config-schema.js'
 import { migrateFromDsh, syncDshConfig } from './dsh-sync.js'
+import { resolveRuntime } from './runtime.js'
 
 // ── Paths ──────────────────────────────────────────────────────────────────
 
@@ -116,8 +117,17 @@ export async function syncToDsh(): Promise<void> {
   const cfg = getConfig()
   const configPath = getConfigPath()
   const dshHome = getDshHome()
-  const result = await syncDshConfig(cfg, configPath, dshHome)
-  console.log(`[narwhal] syncDshConfig: ${result.providerCount} providers, ${result.mcpCount} MCP servers, skills=${result.skillsEnabled ? 'enabled' : 'disabled'}`)
+
+  // Resolve runtime (best-effort — may fail if runtime isn't ready yet)
+  let runtimeRoot: string | undefined
+  try {
+    runtimeRoot = resolveRuntime().root
+  } catch {
+    runtimeRoot = undefined
+  }
+
+  const result = await syncDshConfig(cfg, configPath, dshHome, runtimeRoot)
+  console.log(`[narwhal] syncDshConfig: ${result.providerCount} providers, ${result.mcpCount} MCP servers, skills=${result.skillsEnabled ? 'enabled' : 'disabled'}, pluginDeployed=${result.pluginDeployed}`)
   console.log(`[narwhal]   → ${result.settingsYaml}`)
   console.log(`[narwhal]   → ${result.cordisPatchYaml}`)
 }

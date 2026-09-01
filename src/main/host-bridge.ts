@@ -365,11 +365,11 @@ export class HostBridge {
     try {
       switch (name) {
         case 'goal':  return this.execGoal(sessionId, args)
-        case 'compact': return { kind: 'error', text: '/compact is not available via HTTP in this build' }
-        case 'plan':    return { kind: 'error', text: '/plan is not available via HTTP in this build' }
+        case 'plan':    return this.execPlan(sessionId, args)
+        case 'compact': return this.execCompact(sessionId)
         case 'permission': return this.execPermission(sessionId, args)
         case 'export': return this.execExport(sessionId)
-        case 'feedback': return { kind: 'success', text: 'Opening the DeepSeek Harness feedback page in your browser…' }
+        case 'feedback': return this.execFeedback(sessionId, args)
         default: {
           // Unknown command — could be a skill. Try to dispatch via session.prompt so the
           // model sees it. This is a graceful degradation for future skill-loaded sessions.
@@ -459,6 +459,76 @@ export class HostBridge {
     // We can't trigger a browser download from Node. Instead return the URL and let the renderer open it.
     return { kind: 'success', text: `Download: ${url}` }
   }
+
+  // ── Narwhal plugin endpoints (direct fetch, not rpc envelope) ───────────
+
+  /** Fetch helper that talks directly to the narwhal-commands cordis patch plugin. */
+  private async narwhalFetch(path: string, body: JsonRecord): Promise<Record<string, unknown>> {
+    if (!this.origin) throw new Error('Local Agent is not ready')
+    const response = await fetch(`${this.origin}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = await response.json().catch(() => ({})) as Record<string, unknown>
+    if (!response.ok || data.ok !== true) {
+      const msg = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`
+      throw new Error(msg)
+    }
+    return data
+  }
+
+  /** /plan  — toggle plan mode on/off for the session. */
+  private async execPlan(sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    const control = args.toLowerCase()
+    let active: boolean
+    if (control === 'off' || control === 'false') {
+      active = false
+    } else if (!control || control === 'on' || control === 'true') {
+      active = true
+    } else {
+      return { kind: 'error', text: 'Usage: /plan [on|off]' }
+    }
+    try {
+      await this.narwhalFetch('/api/narwhal/plan', { sessionId, active })
+      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
+      return { kind: 'success', text: `Plan mode ${active ? 'enabled' : 'disabled'}.` }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { kind: 'error', text: `/plan failed: ${msg}` }
+    }
+  }
+
+  /** /feedback  — record a feedback entry on the session. */
+  private async execFeedback(sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    if (!args.trim()) return { kind: 'error', text: 'Usage: /feedback <your feedback text>' }
+    try {
+      await this.narwhalFetch('/api/narwhal/feedback', { sessionId, text: args })
+      return { kind: 'success', text: 'Feedback recorded. Thank you!' }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { kind: 'error', text: `/feedback failed: ${msg}` }
+    }
+  }
+
+  /** /compact  — trigger manual compaction on the session. */
+  private async execCompact(sessionId: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    try {
+      const data = await this.narwhalFetch('/api/narwhal/compact', { sessionId })
+      if (data.compacted === false) {
+        return { kind: 'success', text: typeof data.reason === 'string' ? data.reason : 'No compactable history yet.' }
+      }
+      const seqs = typeof data.shadowedSeqs === 'number' ? data.shadowedSeqs : 0
+      const tokens = typeof data.shadowedTokens === 'number' ? data.shadowedTokens : 0
+      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 1000)
+      return { kind: 'success', text: `Compacted ${seqs} history items (~${tokens} tokens).` }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return { kind: 'error', text: `/compact failed: ${msg}` }
+    }
+  }
+
   private async configuration(): Promise<AgentConfiguration> {
     try {
       const [providersResult, modelsResult, settingsResult, sessionModelsResult] = await Promise.allSettled([
