@@ -112,7 +112,10 @@ function safeEnvironment(dshHome: string): NodeJS.ProcessEnv {
     ...passThrough,
     DSH_HOME: dshHome,
     DSH_TELEMETRY_DISABLED: '1',
-    ...(app.isPackaged && { ELECTRON_RUN_AS_NODE: '1' }),
+    // Always force pure Node mode so Electron doesn't eat DSH CLI args.
+    // Without this, in dev mode `Electron bin.js --profile web ...` is
+    // parsed by Electron itself instead of being forwarded to bin.js.
+    ELECTRON_RUN_AS_NODE: '1',
   }
 }
 
@@ -492,7 +495,7 @@ async function bootstrap(): Promise<void> {
   try { await mkdir(dshHome, { recursive: true, mode: 0o700 }) } catch (e) { console.warn('[narwhal] dsh-home mkdir failed:', e instanceof Error ? e.message : String(e)) }
   try { selectedRuntime = resolveRuntime(); console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry) } catch (e) { console.error('[narwhal] bootstrap: resolveRuntime FAILED:', e instanceof Error ? e.message : String(e)); throw e }
   try { await syncToDsh() } catch (e) { console.error('[narwhal] syncToDsh failed (non-fatal):', e instanceof Error ? e.message : String(e)) }
-  activeSupervisor = createHostSupervisor(() => spawn(selectedRuntime!.nodeExecutable, [...selectedRuntime!.launchArguments, 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
+  activeSupervisor = createHostSupervisor(() => spawn(selectedRuntime!.nodeExecutable, [...selectedRuntime!.launchArguments, '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
   hostBridge.subscribe((conversation) => { emitConversation(conversation); scheduleWorkbenchRefresh() })
   tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-tray.png')).resize({ width: 18, height: 18 })); tray.setToolTip('Narwhal'); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show Narwhal', click: () => windowRef?.show() }, { label: 'Quit', click: () => app.quit() }])); tray.on('click', () => windowRef?.show())
   console.log('[narwhal] bootstrap: loading app URL:', appUrl)
