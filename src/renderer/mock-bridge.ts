@@ -689,18 +689,56 @@ const _mockBridge = Object.freeze({
     return delay(undefined)
   },
 
-  // ── Integrations stubs (browser preview) ──
-  searchMcpServers: async (_query: string, _limit?: number) => delay([]),
+  // ── Integrations (browser preview: real HTTP via fetch()) ──
+  searchMcpServers: async (query: string, limit = 12) => {
+    try {
+      const q = query?.trim() || ''
+      const url = q
+        ? `https://registry.modelcontextprotocol.io/v0.1/servers?search=${encodeURIComponent(q)}&limit=${limit}`
+        : `https://registry.modelcontextprotocol.io/v0.1/servers?limit=${limit}`
+      const res = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (!res.ok) return delay([])
+      const raw = await res.json()
+      const entries: any[] = Array.isArray(raw?.servers) ? raw.servers : []
+      return delay(entries.map((e) => {
+        const s = e.server ?? e
+        const name: string = s.name ?? ''
+        const lastSeg = name.includes('/') ? name.split('/').pop()! : name
+        return {
+          name, displayName: s.title || lastSeg || name,
+          description: s.description ?? '',
+          packageName: `registry:${name}`, packageType: 'http' as const,
+          version: s.version, stars: undefined, repositoryUrl: undefined,
+          tags: (s.remotes ?? []).map((r: any) => r?.type ?? 'unknown'),
+        }
+      }))
+    } catch { return delay([]) }
+  },
   listInstalledMcpServers: async () => delay([]),
-  installMcpServer: async (_server: any) => delay({ ok: true, message: 'Installed (mock)' }),
-  uninstallMcpServer: async (_serverName: string) => delay({ ok: true, message: 'Uninstalled (mock)' }),
-  searchPlugins: async (_query: string) => delay([]),
+  installMcpServer: async (_server: any) => delay({ ok: true, message: 'Installed (browser preview mock)' }),
+  uninstallMcpServer: async (_serverName: string) => delay({ ok: true, message: 'Uninstalled (browser preview mock)' }),
+  searchPlugins: async (query: string) => {
+    try {
+      const q = query?.trim() ? `${query} dsh-plugin` : 'dsh-plugin deepseek-harness'
+      const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(q)}&size=20`
+      const res = await fetch(url, { headers: { Accept: 'application/json' } })
+      if (!res.ok) return delay([])
+      const raw = await res.json()
+      const items: any[] = Array.isArray(raw?.objects) ? raw.objects : []
+      return delay(items.filter((it) => it.package?.name?.startsWith?.('@deepseek-ai')).map((it) => ({
+        packageName: it.package.name, displayName: it.package.name.replace(/^dsh-/, '').trim(),
+        description: it.package.description ?? '', version: it.package.version,
+        stars: Math.round((it.score?.detail?.popularity ?? 0) * 1000),
+        repositoryUrl: it.package.links?.repository, bundleIds: [], tags: it.keywords ?? [],
+      })))
+    } catch { return delay([]) }
+  },
   listInstalledPlugins: async () => delay([]),
-  installPlugin: async (_packageName: string) => delay({ ok: true, message: 'Plugin installed (mock)' }),
-  uninstallPlugin: async (_packageName: string) => delay({ ok: true, message: 'Plugin uninstalled (mock)' }),
+  installPlugin: async (_packageName: string) => delay({ ok: true, message: 'Installed (browser preview mock)' }),
+  uninstallPlugin: async (_packageName: string) => delay({ ok: true, message: 'Uninstalled (browser preview mock)' }),
   listSkills: async () => delay([]),
-  installSkillFromUrl: async (_url: string) => delay({ ok: true, message: 'Skill installed (mock)' }),
-  removeSkill: async (_id: string) => delay({ ok: true, message: 'Skill removed (mock)' }),
+  installSkillFromUrl: async (_url: string) => delay({ ok: true, message: 'Installed (browser preview mock)' }),
+  removeSkill: async (_id: string) => delay({ ok: true, message: 'Removed (browser preview mock)' }),
 
   getConfig: async () => delay(mockNarwhalConfig),
   saveConfig: async (patch: Partial<NarwhalConfig>) => delay({ ...mockNarwhalConfig, ...patch } as NarwhalConfig),
@@ -724,8 +762,16 @@ const _mockBridge = Object.freeze({
 
 export const mockBridge: NarwhalBridge = _mockBridge as NarwhalBridge
 
-// The Electron preload bridge is deliberately read-only. Only install the
-// browser-preview mock when no trusted bridge has already been exposed.
-if (typeof window !== 'undefined' && !window.narwhal) {
-  ;(window as unknown as { narwhal?: NarwhalBridge }).narwhal = mockBridge
+// Install the browser-preview mock bridge on window.narwhal.
+// - In Electron, the preload script always sets window.narwhal FIRST via
+//   contextBridge.exposeInMainWorld(), so we leave the real bridge untouched.
+// - In browser dev preview, window.narwhal starts undefined → we set it.
+// - During HMR a stale cached mock may have set window.narwhal without the
+//   latest methods (e.g. searchMcpServers). Detect that case and overwrite.
+if (typeof window !== 'undefined') {
+  const existing = (window as any).narwhal as Partial<NarwhalBridge> | undefined
+  const needsRefresh = !existing || typeof existing.searchMcpServers !== 'function'
+  if (needsRefresh) {
+    ;(window as unknown as { narwhal: NarwhalBridge }).narwhal = mockBridge
+  }
 }

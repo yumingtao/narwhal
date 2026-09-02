@@ -2,7 +2,13 @@
 import { useEffect, useState, useMemo } from 'react'
 import type { BundlePluginCard, InstalledPlugin, McpServer, McpServerCard, NarwhalBridge, SkillCard } from '../shared/desktop-contract'
 
-const api: NarwhalBridge = (typeof window !== 'undefined' ? (window as any).narwhal : undefined) as NarwhalBridge
+// Delay window.narwhal resolution until call time — avoids module-init ordering races
+// where integrations.tsx loads before mock-bridge.js has set window.narwhal.
+const getApi = (): NarwhalBridge => {
+  const bridge = (typeof window !== 'undefined' ? (window as any).narwhal : undefined) as NarwhalBridge | undefined
+  if (!bridge) throw new Error('Narwhal bridge is not ready')
+  return bridge
+}
 
 // --- MCP Servers Tab ---
 
@@ -15,7 +21,7 @@ export function McpServersTab() {
   const [notice, setNotice] = useState('')
 
   const refreshInstalled = async () => {
-    try { setInstalled((await api.listInstalledMcpServers()) as McpServer[]) } catch { /* ignore */ }
+    try { setInstalled((await getApi().listInstalledMcpServers()) as McpServer[]) } catch { /* ignore */ }
   }
 
   useEffect(() => { void refreshInstalled() }, [])
@@ -23,7 +29,7 @@ export function McpServersTab() {
   const runSearch = async () => {
     setLoading(true); setNotice('')
     try {
-      const results = await api.searchMcpServers(query, 30)
+      const results = await getApi().searchMcpServers(query, 30)
       setCards(results as McpServerCard[])
       if (!results.length) setNotice(query ? `No public MCP servers match "${query}".` : 'Could not reach the MCP registry.')
     } catch (err) {
@@ -48,7 +54,7 @@ export function McpServersTab() {
           : ['run', '-i', '--rm', card.packageName],
     }
     try {
-      const result = await api.installMcpServer(server)
+      const result = await getApi().installMcpServer(server)
       setNotice(result.ok ? `✓ ${result.message}` : `✗ ${result.message ?? 'Install failed'}`)
       if (result.ok) {
         setQuery('')
@@ -59,7 +65,7 @@ export function McpServersTab() {
 
   const handleUninstall = async (serverName: string) => {
     if (!window.confirm(`Remove MCP server "${serverName}"?`)) return
-    const result = await api.uninstallMcpServer(serverName)
+    const result = await getApi().uninstallMcpServer(serverName)
     setNotice(result.ok ? `✓ ${result.message}` : `✗ ${result.message ?? 'Remove failed'}`)
     if (result.ok) void refreshInstalled()
   }
@@ -156,7 +162,7 @@ export function PluginsTab() {
   const [notice, setNotice] = useState('')
 
   const refreshInstalled = async () => {
-    try { setInstalled((await api.listInstalledPlugins()) as InstalledPlugin[]) } catch { /* ignore */ }
+    try { setInstalled((await getApi().listInstalledPlugins()) as InstalledPlugin[]) } catch { /* ignore */ }
   }
 
   useEffect(() => { void refreshInstalled() }, [])
@@ -164,7 +170,7 @@ export function PluginsTab() {
   const runSearch = async () => {
     setLoading(true); setNotice('')
     try {
-      const results = await api.searchPlugins(query)
+      const results = await getApi().searchPlugins(query)
       setCards(results as BundlePluginCard[])
       if (!results.length) setNotice(query ? `No DSH bundle plugins match "${query}".` : 'npm registry unreachable — showing no results.')
     } catch (err) {
@@ -176,7 +182,7 @@ export function PluginsTab() {
 
   const handleInstall = async (pkg: string) => {
     setInstalling(pkg); setNotice('')
-    const result = await api.installPlugin(pkg)
+    const result = await getApi().installPlugin(pkg)
     if (result.ok) {
       setNotice(result.logs ? `✓ Installed ${pkg}\n${result.logs.join('\n')}` : `✓ Installed ${pkg}`)
       void refreshInstalled()
@@ -188,7 +194,7 @@ export function PluginsTab() {
 
   const handleUninstall = async (pkg: string) => {
     if (!window.confirm(`Uninstall "${pkg}"? This removes its bundle from the DSH profile.`)) return
-    const result = await api.uninstallPlugin(pkg)
+    const result = await getApi().uninstallPlugin(pkg)
     setNotice(result.ok ? `✓ ${result.message}` : `✗ ${result.message ?? 'Remove failed'}`)
     if (result.ok) void refreshInstalled()
   }
@@ -282,7 +288,7 @@ export function SkillsTab() {
 
   const refresh = async () => {
     setLoading(true)
-    try { setSkills((await api.listSkills()) as SkillCard[]) } catch (err) { setNotice(err instanceof Error ? err.message : 'Failed to load skills') }
+    try { setSkills((await getApi().listSkills()) as SkillCard[]) } catch (err) { setNotice(err instanceof Error ? err.message : 'Failed to load skills') }
     finally { setLoading(false) }
   }
 
@@ -290,7 +296,7 @@ export function SkillsTab() {
 
   const handleAddFromUrl = async () => {
     if (!newSkillUrl.trim()) return
-    const result = await api.installSkillFromUrl(newSkillUrl.trim())
+    const result = await getApi().installSkillFromUrl(newSkillUrl.trim())
     setNotice(result.ok ? `✓ ${result.message}` : `✗ ${result.message ?? 'Install failed'}`)
     if (result.ok) { setNewSkillUrl(''); void refresh() }
   }
@@ -298,7 +304,7 @@ export function SkillsTab() {
   const handleRemove = async (id: string) => {
     if (!window.confirm('Remove this skill?')) return
     setRemoving(id)
-    const result = await api.removeSkill(id)
+    const result = await getApi().removeSkill(id)
     setNotice(result.ok ? `✓ ${result.message}` : `✗ ${result.message ?? 'Remove failed'}`)
     if (result.ok) void refresh()
     setRemoving(null)

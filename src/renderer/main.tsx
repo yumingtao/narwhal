@@ -1,3 +1,6 @@
+// Load bridge first so that `window.narwhal` is available for all downstream modules
+import './mock-bridge.js'
+
 import { StrictMode, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import ReactMarkdown, { type Components } from 'react-markdown'
@@ -15,7 +18,6 @@ import { McpServersTab, PluginsTab, SkillsTab } from './integrations.tsx'
 import './styles.css'
 
 // Detect Electron vs. browser (dev preview) environment and load the appropriate bridge
-import './mock-bridge.js'
 const _api = window.narwhal
 if (!_api) throw new Error('Narwhal desktop bridge is unavailable')
 const api = _api
