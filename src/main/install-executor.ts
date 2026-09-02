@@ -232,7 +232,8 @@ export function buildMcpServerFromCard(args: {
 // Skill install (from git clone or direct SKILL.md URL)
 // ---------------------------------------------------------------------------
 
-const SKILLS_DIR_NAME = 'narwhal-skills'
+// Canonical skill directory under ~/.config/narwhal/ (aligns with config.json location)
+const SKILLS_DIR_NAME = 'skills'
 
 // Hosts allowed for skill fetch (prevents SSRF to internal services)
 const ALLOWED_SKILL_HOSTS = new Set([
@@ -273,9 +274,11 @@ function isValidSkillHost(hostname: string): boolean {
 const SAFE_DIRNAME = /^[A-Za-z0-9_-]{1,80}$/u
 
 export function getSkillDirs(dshHome: string): string[] {
+  // Use same config dir resolution as config.ts — respect NARWHAL_CONFIG_DIR
+  const configDir = process.env.NARWHAL_CONFIG_DIR ?? path.join(os.homedir(), '.config', 'narwhal')
   const roots = [
     path.join(os.homedir(), '.dsh', 'skills'),
-    path.join(os.homedir(), '.config', 'narwhal', SKILLS_DIR_NAME),
+    path.join(configDir, SKILLS_DIR_NAME),
     path.join(dshHome, SKILLS_DIR_NAME),
   ]
   return roots
@@ -304,9 +307,11 @@ export async function installSkillFromUrl(dshHome: string, url: string, log?: Lo
     return { ok: false, message: `Host "${parsed.hostname}" is not allowed` }
   }
 
-  // Determine target dir — use dshHome-specific path (M7 fix)
+  // Determine target dir — canonical: ~/.config/narwhal/skills (aligns with config.json)
+  // We still keep roots[2] in getSkillDirs for list-skills backward compatibility,
+  // but new installs always go to roots[1].
   const roots = getSkillDirs(dshHome)
-  const targetDir = roots[2] // <dshHome>/narwhal-skills
+  const targetDir = roots[1] // ~/.config/narwhal/skills
   try { fs.mkdirSync(targetDir, { recursive: true }) } catch { /* ignore */ }
 
   // Case 1: raw SKILL.md URL
@@ -345,7 +350,7 @@ export async function installSkillFromUrl(dshHome: string, url: string, log?: Lo
           }
         })
         res.pipe(file)
-        file.on('finish', () => file.close(() => resolve({ ok: true, message: `Skill installed to ${destDir}` })))
+        file.on('finish', () => file.close(() => resolve({ ok: true, message: `Skill installed to ${destDir}`, installDir: destDir })))
       })
       // Handle transport-level errors (DNS failure, connection reset, etc.)
       req.on('error', (err: Error) => {
@@ -371,7 +376,7 @@ export async function installSkillFromUrl(dshHome: string, url: string, log?: Lo
     if (exitCode !== 0) {
       return { ok: false, message: `git clone failed with code ${exitCode}` }
     }
-    return { ok: true, message: 'Skill repository cloned successfully' }
+    return { ok: true, message: 'Skill repository cloned successfully', installDir: cloneDir }
   }
 
   return { ok: false, message: `Unrecognized skill URL: ${url}` }

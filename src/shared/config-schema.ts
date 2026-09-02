@@ -168,6 +168,9 @@ export const configSchema = z.object({
   // Skill system → sync to DSH cordis.patch.yml (enable skill-filesystem)
   skills: skillConfigSchema.optional().default({ enabled: false, customDirs: [] }),
 
+  // DSH bundle plugins — installed via `dsh plugin add`, tracked here for UI display
+  bundlePlugins: z.array(z.string()).optional().default([]),
+
   // MCP servers → each becomes one dsh-mcp-client plugin entry in cordis.patch.yml
   mcpServers: z.array(mcpServerSchema).optional().default([]),
 })
@@ -188,6 +191,7 @@ export const defaultConfig: NarwhalConfig = {
     enabled: false,
     customDirs: [],
   },
+  bundlePlugins: [],
   mcpServers: [],
 }
 

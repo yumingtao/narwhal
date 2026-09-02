@@ -346,6 +346,21 @@ function registerIpc(): void {
     if (!runtime) return { ok: false, message: 'DSH runtime not available' }
     const logs: string[] = []
     const result = await installBundlePlugin(dshHome, runtime, 'web', pkg, (line) => logs.push(line))
+    if (result.ok) {
+      // Track in config.json
+      try {
+        const cfg = getConfig() as any
+        const currentPlugins: string[] = cfg.bundlePlugins ?? []
+        if (!currentPlugins.includes(pkg)) {
+          await saveConfig({ ...cfg, bundlePlugins: [...currentPlugins, pkg] } as any)
+        }
+      } catch (err) {
+        console.warn('[narwhal] saveConfig after plugin install failed:', err instanceof Error ? err.message : err)
+      }
+      try { await syncToDsh() } catch (err) {
+        console.warn('[narwhal] syncToDsh after plugin install failed:', err instanceof Error ? err.message : err)
+      }
+    }
     return { ...result, logs }
   })
 
@@ -359,6 +374,21 @@ function registerIpc(): void {
     if (!runtime) return { ok: false, message: 'DSH runtime not available' }
     const logs: string[] = []
     const result = await uninstallBundlePlugin(dshHome, runtime, 'web', pkg, (line) => logs.push(line))
+    if (result.ok) {
+      // Remove from config.json
+      try {
+        const cfg = getConfig() as any
+        const currentPlugins: string[] = cfg.bundlePlugins ?? []
+        if (currentPlugins.includes(pkg)) {
+          await saveConfig({ ...cfg, bundlePlugins: currentPlugins.filter((p) => p !== pkg) } as any)
+        }
+      } catch (err) {
+        console.warn('[narwhal] saveConfig after plugin uninstall failed:', err instanceof Error ? err.message : err)
+      }
+      try { await syncToDsh() } catch (err) {
+        console.warn('[narwhal] syncToDsh after plugin uninstall failed:', err instanceof Error ? err.message : err)
+      }
+    }
     return { ...result, logs }
   })
 
@@ -389,6 +419,27 @@ function registerIpc(): void {
     const dshHome = getDshHome()
     const logs: string[] = []
     const result = await installSkillFromUrl(dshHome, url, (line) => logs.push(line))
+    if (result.ok && result.installDir) {
+      // Track skill dir in config.json + enable skill system
+      try {
+        const cfg = getConfig() as any
+        const currentDirs: string[] = cfg.skills?.customDirs ?? []
+        if (!currentDirs.includes(result.installDir)) {
+          await saveConfig({
+            ...cfg,
+            skills: {
+              enabled: true,
+              customDirs: [...currentDirs, result.installDir],
+            },
+          } as any)
+        }
+      } catch (err) {
+        console.warn('[narwhal] saveConfig after skill install failed:', err instanceof Error ? err.message : err)
+      }
+      try { await syncToDsh() } catch (err) {
+        console.warn('[narwhal] syncToDsh after skill install failed:', err instanceof Error ? err.message : err)
+      }
+    }
     return { ...result, logs }
   })
 
@@ -398,7 +449,35 @@ function registerIpc(): void {
     if (!id) return { ok: false, message: 'id required' }
     if (id.length > 200) return { ok: false, message: 'id too long' }
     const dshHome = getDshHome()
-    return removeSkillById(dshHome, id)
+    const result = removeSkillById(dshHome, id)
+    if (result.ok) {
+      // Compute the dir that was removed so we can clean up config.json
+      // id format: "custom:<dirname>" → full path = roots[1]/<dirname>
+      const parts = id.split(':')
+      const dirName = parts[1] ?? id
+      const roots = getSkillDirs(dshHome)
+      const removedDir = join(roots[1], dirName)
+      try {
+        const cfg = getConfig() as any
+        const currentDirs: string[] = cfg.skills?.customDirs ?? []
+        if (currentDirs.includes(removedDir)) {
+          const nextDirs = currentDirs.filter((d) => d !== removedDir)
+          await saveConfig({
+            ...cfg,
+            skills: {
+              enabled: nextDirs.length > 0 || cfg.skills?.enabled,
+              customDirs: nextDirs,
+            },
+          } as any)
+        }
+      } catch (err) {
+        console.warn('[narwhal] saveConfig after skill remove failed:', err instanceof Error ? err.message : err)
+      }
+      try { await syncToDsh() } catch (err) {
+        console.warn('[narwhal] syncToDsh after skill remove failed:', err instanceof Error ? err.message : err)
+      }
+    }
+    return result
   })
 }
 async function bootstrap(): Promise<void> {

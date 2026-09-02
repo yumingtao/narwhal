@@ -101,6 +101,8 @@ export interface InstallResult {
   readonly ok: boolean
   readonly message?: string
   readonly logs?: readonly string[]
+  /** Absolute path of the installed artifact dir (skill/MCP/plugin) */
+  readonly installDir?: string
 }
 export interface NarwhalBridge {
   bootstrap(): Promise<{ readonly agent: AgentSnapshot; readonly workbench: WorkbenchSnapshot; readonly settings: DesktopSettings; readonly config: NarwhalConfig; readonly configLoadError?: string }>
