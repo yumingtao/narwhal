@@ -768,10 +768,15 @@ export const mockBridge: NarwhalBridge = _mockBridge as NarwhalBridge
 // - In browser dev preview, window.narwhal starts undefined → we set it.
 // - During HMR a stale cached mock may have set window.narwhal without the
 //   latest methods (e.g. searchMcpServers). Detect that case and overwrite.
+//
+// Detection strategy:
+//   - A real Electron preload bridge ALWAYS exposes `bootstrap` as a function
+//     (see electron/preload/index.cts). If we see bootstrap, do NOT overwrite.
+//   - Anything else (missing, stale mock, incomplete HMR reload) gets refreshed.
 if (typeof window !== 'undefined') {
   const existing = (window as any).narwhal as Partial<NarwhalBridge> | undefined
-  const needsRefresh = !existing || typeof existing.searchMcpServers !== 'function'
-  if (needsRefresh) {
+  const hasRealPreloadBridge = typeof existing?.bootstrap === 'function'
+  if (!hasRealPreloadBridge) {
     ;(window as unknown as { narwhal: NarwhalBridge }).narwhal = mockBridge
   }
 }

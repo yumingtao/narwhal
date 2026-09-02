@@ -40,6 +40,8 @@ function httpGetJson<T>(url: string): Promise<T> {
 // ---------------------------------------------------------------------------
 
 export async function searchMcpServers(query: string, limit = 24): Promise<McpServerCard[]> {
+  // Clip limit to reasonable bounds (m3 fix)
+  limit = Math.max(1, Math.min(limit, 100))
   const q = query.trim()
   const url = q
     ? `${MCP_REGISTRY_BASE}/servers?search=${encodeURIComponent(q)}&limit=${limit}`
@@ -177,6 +179,13 @@ export function discoverSkills(customRoots: string[] = [], workspaceRoot?: strin
         const skillDir = path.join(dir, entry.name)
         const skillFile = path.join(skillDir, 'SKILL.md')
         if (!fs.existsSync(skillFile)) continue
+        // Size-check before reading (m2 fix)
+        try {
+          const stat = fs.statSync(skillFile)
+          if (stat.size > 5 * 1024 * 1024) continue // skip files > 5MB
+        } catch {
+          continue
+        }
         const content = fs.readFileSync(skillFile, 'utf8')
         const parsed = parseSkillMd(content)
         cards.push({

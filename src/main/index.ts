@@ -280,25 +280,28 @@ function registerIpc(): void {
 
   // --- Integrations: MCP / Plugins / Skills ---
 
-  ipcMain.handle('narwhal:search-mcp-servers', async (_event, raw): Promise<readonly McpServerCard[]> => {
+  ipcMain.handle('narwhal:search-mcp-servers', async (event, raw): Promise<readonly McpServerCard[]> => {
+    sender(event)
     const q = typeof raw === 'string' ? raw : (raw && typeof (raw as any).query === 'string' ? (raw as any).query : '')
-    const limit = raw && typeof (raw as any).limit === 'number' ? (raw as any).limit : 24
+    const limit = Math.max(1, Math.min(raw && typeof (raw as any).limit === 'number' ? (raw as any).limit : 24, 100))
     return registrySearchMcp(q, limit)
   })
 
-  ipcMain.handle('narwhal:list-installed-mcp-servers', async (): Promise<readonly McpServer[]> => {
+  ipcMain.handle('narwhal:list-installed-mcp-servers', async (event): Promise<readonly McpServer[]> => {
+    sender(event)
     const cfg = getConfig() as any
     const servers = (cfg.mcpServers ?? []) as McpServer[]
     return servers
   })
 
-  ipcMain.handle('narwhal:install-mcp-server', async (_event, raw): Promise<InstallResult> => {
+  ipcMain.handle('narwhal:install-mcp-server', async (event, raw): Promise<InstallResult> => {
+    sender(event)
     if (!raw || typeof raw !== 'object') return { ok: false, message: 'Invalid server payload' }
     const server = raw as McpServer
     const cfg = getConfig() as any
     const currentServers = (cfg.mcpServers ?? []) as McpServer[]
     const { next } = installMcpServerToConfig(currentServers, server)
-    const updated = saveConfig({ ...cfg, mcpServers: next } as any)
+    await saveConfig({ ...cfg, mcpServers: next } as any)
     // Sync to DSH (writes cordis.patch.yml + settings.yaml)
     try { await syncToDsh() } catch (err) {
       console.warn('[narwhal] syncToDsh after MCP install failed:', err instanceof Error ? err.message : err)
@@ -306,33 +309,38 @@ function registerIpc(): void {
     return { ok: true, message: `MCP server "${server.serverName}" installed` }
   })
 
-  ipcMain.handle('narwhal:uninstall-mcp-server', async (_event, raw): Promise<InstallResult> => {
+  ipcMain.handle('narwhal:uninstall-mcp-server', async (event, raw): Promise<InstallResult> => {
+    sender(event)
     const serverName = typeof raw === 'string' ? raw : (raw && typeof (raw as any).serverName === 'string' ? (raw as any).serverName : '')
     if (!serverName) return { ok: false, message: 'serverName required' }
     const cfg = getConfig() as any
     const currentServers = (cfg.mcpServers ?? []) as McpServer[]
     const { next, wasRemoved } = uninstallMcpServerFromConfig(currentServers, serverName)
     if (!wasRemoved) return { ok: false, message: `MCP server "${serverName}" not found` }
-    saveConfig({ ...cfg, mcpServers: next } as any)
+    await saveConfig({ ...cfg, mcpServers: next } as any)
     try { await syncToDsh() } catch (err) {
       console.warn('[narwhal] syncToDsh after MCP uninstall failed:', err instanceof Error ? err.message : err)
     }
     return { ok: true, message: `MCP server "${serverName}" removed` }
   })
 
-  ipcMain.handle('narwhal:search-plugins', async (_event, raw): Promise<readonly BundlePluginCard[]> => {
+  ipcMain.handle('narwhal:search-plugins', async (event, raw): Promise<readonly BundlePluginCard[]> => {
+    sender(event)
     const q = typeof raw === 'string' ? raw : (raw && typeof (raw as any).query === 'string' ? (raw as any).query : '')
     return registrySearchPlugins(q)
   })
 
-  ipcMain.handle('narwhal:list-installed-plugins', async (): Promise<readonly InstalledPlugin[]> => {
+  ipcMain.handle('narwhal:list-installed-plugins', async (event): Promise<readonly InstalledPlugin[]> => {
+    sender(event)
     const dshHome = getDshHome()
     return listInstalledBundlePlugins(dshHome, 'web')
   })
 
-  ipcMain.handle('narwhal:install-plugin', async (_event, raw): Promise<InstallResult> => {
+  ipcMain.handle('narwhal:install-plugin', async (event, raw): Promise<InstallResult> => {
+    sender(event)
     const pkg = typeof raw === 'string' ? raw : (raw && typeof (raw as any).packageName === 'string' ? (raw as any).packageName : '')
     if (!pkg) return { ok: false, message: 'packageName required' }
+    if (pkg.length > 200) return { ok: false, message: 'packageName too long' }
     const dshHome = getDshHome()
     const runtime = selectedRuntime?.root ?? ''
     if (!runtime) return { ok: false, message: 'DSH runtime not available' }
@@ -341,9 +349,11 @@ function registerIpc(): void {
     return { ...result, logs }
   })
 
-  ipcMain.handle('narwhal:uninstall-plugin', async (_event, raw): Promise<InstallResult> => {
+  ipcMain.handle('narwhal:uninstall-plugin', async (event, raw): Promise<InstallResult> => {
+    sender(event)
     const pkg = typeof raw === 'string' ? raw : (raw && typeof (raw as any).packageName === 'string' ? (raw as any).packageName : '')
     if (!pkg) return { ok: false, message: 'packageName required' }
+    if (pkg.length > 200) return { ok: false, message: 'packageName too long' }
     const dshHome = getDshHome()
     const runtime = selectedRuntime?.root ?? ''
     if (!runtime) return { ok: false, message: 'DSH runtime not available' }
@@ -352,7 +362,8 @@ function registerIpc(): void {
     return { ...result, logs }
   })
 
-  ipcMain.handle('narwhal:list-skills', async (): Promise<readonly SkillCard[]> => {
+  ipcMain.handle('narwhal:list-skills', async (event): Promise<readonly SkillCard[]> => {
+    sender(event)
     const dshHome = getDshHome()
     const roots = getSkillDirs(dshHome)
     const cards: SkillCard[] = []
@@ -370,18 +381,22 @@ function registerIpc(): void {
     return unique
   })
 
-  ipcMain.handle('narwhal:install-skill-from-url', async (_event, raw): Promise<InstallResult> => {
+  ipcMain.handle('narwhal:install-skill-from-url', async (event, raw): Promise<InstallResult> => {
+    sender(event)
     const url = typeof raw === 'string' ? raw : (raw && typeof (raw as any).url === 'string' ? (raw as any).url : '')
     if (!url) return { ok: false, message: 'url required' }
+    if (url.length > 2000) return { ok: false, message: 'url too long' }
     const dshHome = getDshHome()
     const logs: string[] = []
     const result = await installSkillFromUrl(dshHome, url, (line) => logs.push(line))
     return { ...result, logs }
   })
 
-  ipcMain.handle('narwhal:remove-skill', async (_event, raw): Promise<InstallResult> => {
+  ipcMain.handle('narwhal:remove-skill', async (event, raw): Promise<InstallResult> => {
+    sender(event)
     const id = typeof raw === 'string' ? raw : (raw && typeof (raw as any).id === 'string' ? (raw as any).id : '')
     if (!id) return { ok: false, message: 'id required' }
+    if (id.length > 200) return { ok: false, message: 'id too long' }
     const dshHome = getDshHome()
     return removeSkillById(dshHome, id)
   })

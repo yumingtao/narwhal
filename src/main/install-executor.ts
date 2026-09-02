@@ -3,7 +3,6 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import https from 'node:https'
-import http from 'node:http'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -235,6 +234,44 @@ export function buildMcpServerFromCard(args: {
 
 const SKILLS_DIR_NAME = 'narwhal-skills'
 
+// Hosts allowed for skill fetch (prevents SSRF to internal services)
+const ALLOWED_SKILL_HOSTS = new Set([
+  'github.com',
+  'raw.githubusercontent.com',
+  'gist.githubusercontent.com',
+  'cdn.jsdelivr.net',
+  'raw.githubusercontent.com',
+])
+
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  if (!hostname) return true
+  // Strip trailing dot
+  const h = hostname.replace(/\.$/u, '')
+  // Allow localhost and IPv6 variants
+  if (h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return true
+  // Link-local
+  if (h.startsWith('169.254.')) return true
+  // Private ranges (best-effort; for real IPs we do exact checks below)
+  const octets = h.split('.')
+  if (octets.length === 4) {
+    const [a, b] = octets.map(Number)
+    if (a === 10) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+  }
+  return false
+}
+
+function isValidSkillHost(hostname: string): boolean {
+  if (!hostname) return false
+  if (isPrivateOrLoopbackHost(hostname)) return false
+  // Check against explicit allow list
+  return ALLOWED_SKILL_HOSTS.has(hostname)
+}
+
+// Skill directory whitelist: only allow safe path segment names
+const SAFE_DIRNAME = /^[A-Za-z0-9_-]{1,80}$/u
+
 export function getSkillDirs(dshHome: string): string[] {
   const roots = [
     path.join(os.homedir(), '.dsh', 'skills'),
@@ -244,37 +281,91 @@ export function getSkillDirs(dshHome: string): string[] {
   return roots
 }
 
+function resolveSkillDir(root: string, dirName: string): string | null {
+  // Whitelist the dirName; reject anything that could escape via `..`
+  if (!SAFE_DIRNAME.test(dirName)) return null
+  const candidate = path.join(root, dirName)
+  const resolved = path.resolve(candidate)
+  const rootResolved = path.resolve(root)
+  if (!resolved.startsWith(rootResolved + path.sep) && resolved !== rootResolved) return null
+  return resolved
+}
+
 export async function installSkillFromUrl(dshHome: string, url: string, log?: LogConsumer): Promise<InstallResult> {
-  // Determine target dir
+  // Validate URL first
+  let parsed: URL
+  try { parsed = new URL(url) } catch { return { ok: false, message: 'Invalid URL' } }
+
+  // Block http://, file://, and other dangerous protocols
+  if (parsed.protocol !== 'https:') {
+    return { ok: false, message: 'Only https:// URLs are supported for skill installation' }
+  }
+  if (!isValidSkillHost(parsed.hostname)) {
+    return { ok: false, message: `Host "${parsed.hostname}" is not allowed` }
+  }
+
+  // Determine target dir — use dshHome-specific path (M7 fix)
   const roots = getSkillDirs(dshHome)
-  const targetDir = roots[1] // ~/.config/narwhal/narwhal-skills
+  const targetDir = roots[2] // <dshHome>/narwhal-skills
   try { fs.mkdirSync(targetDir, { recursive: true }) } catch { /* ignore */ }
 
-  // Case 1: raw SKILL.md URL (GitHub raw, etc.)
-  if (/SKILL\.md$/i.test(url)) {
-    const parsed = new URL(url)
-    const transport = parsed.protocol === 'https:' ? https : http
+  // Case 1: raw SKILL.md URL
+  if (/SKILL\.md$/i.test(parsed.pathname)) {
+    // Derive safe skill name from URL path — use URL parsing, not Node path (M2 fix)
+    const segments = parsed.pathname.split('/').filter(Boolean)
+    // Find the directory containing SKILL.md
+    const skillNameCandidate = segments.length >= 2 ? segments[segments.length - 2] : null
+    const skillName = (skillNameCandidate && SAFE_DIRNAME.test(skillNameCandidate))
+      ? skillNameCandidate
+      : `skill-${Date.now()}`
+
+    const destDir = resolveSkillDir(targetDir, skillName)
+    if (!destDir) return { ok: false, message: 'Invalid skill directory name' }
+    try { fs.mkdirSync(destDir, { recursive: true }) } catch { /* ignore */ }
+    const outFile = path.join(destDir, 'SKILL.md')
+
     return new Promise((resolve) => {
-      const skillName = path.basename(path.dirname(url)) || `skill-${Date.now()}`
-      const destDir = path.join(targetDir, skillName)
-      try { fs.mkdirSync(destDir, { recursive: true }) } catch { /* ignore */ }
-      const outFile = path.join(destDir, 'SKILL.md')
-      transport.get(url, { timeout: 10000 }, (res) => {
+      const file = fs.createWriteStream(outFile)
+      const req = https.get(url, { timeout: 15000 }, (res) => {
         if (res.statusCode && res.statusCode >= 400) {
           res.resume()
           resolve({ ok: false, message: `HTTP ${res.statusCode} fetching ${url}` })
           return
         }
-        const file = fs.createWriteStream(outFile)
+        // Enforce max file size (5MB) for security (m2 fix)
+        let received = 0
+        const MAX_SKILL_SIZE = 5 * 1024 * 1024
+        res.on('data', (chunk) => {
+          received += chunk.length
+          if (received > MAX_SKILL_SIZE) {
+            res.destroy()
+            file.destroy()
+            try { fs.rmSync(outFile, { force: true }) } catch { /* best-effort cleanup */ }
+            resolve({ ok: false, message: 'SKILL.md exceeds 5MB limit' })
+          }
+        })
         res.pipe(file)
         file.on('finish', () => file.close(() => resolve({ ok: true, message: `Skill installed to ${destDir}` })))
-      }).on('error', (err: Error) => resolve({ ok: false, message: err.message }))
+      })
+      // Handle transport-level errors (DNS failure, connection reset, etc.)
+      req.on('error', (err: Error) => {
+        file.destroy()
+        try { fs.rmSync(outFile, { force: true }) } catch { /* best-effort cleanup */ }
+        resolve({ ok: false, message: err.message })
+      })
+      // Handle timeouts
+      req.on('timeout', () => {
+        req.destroy()
+        resolve({ ok: false, message: 'Request timed out' })
+      })
     })
   }
 
-  // Case 2: Git repo (clone shallow, find SKILL.md files inside)
-  if (/\.git$/i.test(url) || url.startsWith('https://github.com/')) {
-    const exitCode = await run('git', ['clone', '--depth', '1', url, path.join(targetDir, `skill-${Date.now()}`)], {
+  // Case 2: Git repo — use hostname validation (M3 fix)
+  if (/\.git$/i.test(parsed.pathname) || parsed.hostname === 'github.com') {
+    const cloneDir = resolveSkillDir(targetDir, `skill-${Date.now()}`)
+    if (!cloneDir) return { ok: false, message: 'Invalid clone directory' }
+    const exitCode = await run('git', ['clone', '--depth', '1', url, cloneDir], {
       log, timeoutMs: 60_000,
     })
     if (exitCode !== 0) {
@@ -287,12 +378,19 @@ export async function installSkillFromUrl(dshHome: string, url: string, log?: Lo
 }
 
 export function removeSkillById(dshHome: string, id: string): InstallResult {
-  // id format: "custom:<dirname>"
+  // id format: "custom:<dirname>" or "<dirname>"
   const parts = id.split(':')
   const dirName = parts[1] ?? id
+
+  // Whitelist dirName to prevent path traversal (C3 fix)
+  if (!SAFE_DIRNAME.test(dirName)) {
+    return { ok: false, message: `Invalid skill id: "${id}"` }
+  }
+
   const roots = getSkillDirs(dshHome)
   for (const root of roots) {
-    const candidate = path.join(root, dirName)
+    const candidate = resolveSkillDir(root, dirName)
+    if (!candidate) continue
     if (fs.existsSync(candidate) && fs.existsSync(path.join(candidate, 'SKILL.md'))) {
       try {
         fs.rmSync(candidate, { recursive: true, force: true })
