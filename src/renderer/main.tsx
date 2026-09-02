@@ -1201,7 +1201,7 @@ function SettingsDialog({ settings, agent, theme, setTheme, close, restart }: { 
     { id: 'providers', label: 'Providers', icon: 'provider', group: 'Agent' },
     { id: 'permissions', label: 'Permissions', icon: 'shield', group: 'Agent' },
     { id: 'mcp', label: 'MCP Servers', icon: 'provider', group: 'Integrations' },
-    { id: 'plugins', label: 'Bundle Plugins', icon: 'model', group: 'Integrations' },
+    { id: 'plugins', label: 'Runtime Extensions', icon: 'model', group: 'Integrations' },
     { id: 'skills', label: 'Skills', icon: 'file', group: 'Integrations' },
     { id: 'theme', label: 'Appearance', icon: 'sliders', group: 'System' },
     { id: 'runtime', label: 'Runtime', icon: 'runtime', group: 'System' },

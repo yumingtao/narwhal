@@ -1,4 +1,4 @@
-// Integrations settings panels: MCP Servers, Bundle Plugins, Skills
+// Integrations settings panels: MCP Servers, Runtime Extensions, Skills
 import { useEffect, useState, useMemo } from 'react'
 import type { BundlePluginCard, InstalledPlugin, McpServer, McpServerCard, NarwhalBridge, SkillCard } from '../shared/desktop-contract'
 
@@ -12,6 +12,8 @@ const getApi = (): NarwhalBridge => {
 
 // --- MCP Servers Tab ---
 
+type TransportKind = 'stdio' | 'streamable-http'
+
 export function McpServersTab() {
   const [query, setQuery] = useState('')
   const [cards, setCards] = useState<McpServerCard[]>([])
@@ -19,6 +21,18 @@ export function McpServersTab() {
   const [loading, setLoading] = useState(false)
   const [installing, setInstalling] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
+
+  // Custom MCP form state
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customTransport, setCustomTransport] = useState<TransportKind>('stdio')
+  const [customName, setCustomName] = useState('')
+  const [customCommand, setCustomCommand] = useState('')
+  const [customArgs, setCustomArgs] = useState('')
+  const [customUrl, setCustomUrl] = useState('')
+  const [customCwd, setCustomCwd] = useState('')
+  const [customEnv, setCustomEnv] = useState('')
+  const [customHeaders, setCustomHeaders] = useState('')
+  const [customSubmitting, setCustomSubmitting] = useState(false)
 
   const refreshInstalled = async () => {
     try { setInstalled((await getApi().listInstalledMcpServers()) as McpServer[]) } catch { /* ignore */ }
@@ -63,6 +77,71 @@ export function McpServersTab() {
     } finally { setInstalling(null) }
   }
 
+  // Parse "k=v\nk2=v2" or JSON "{...}" → Record<string,string>
+  const parseKeyValue = (raw: string): Record<string, string> | undefined => {
+    const trimmed = raw.trim()
+    if (!trimmed) return undefined
+    if (trimmed.startsWith('{')) {
+      try {
+        const obj = JSON.parse(trimmed)
+        const out: Record<string, string> = {}
+        for (const [k, v] of Object.entries(obj)) {
+          if (typeof v === 'string') out[k] = v
+        }
+        return out
+      } catch { /* fall through */ }
+    }
+    const out: Record<string, string> = {}
+    for (const line of trimmed.split(/\r?\n/)) {
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(.+)$/)
+      if (m) out[m[1]] = m[2].trim()
+    }
+    return Object.keys(out).length > 0 ? out : undefined
+  }
+
+  const handleCustomInstall = async () => {
+    const name = customName.trim().slice(0, 32)
+    if (!name) { setNotice('Server name is required'); return }
+    if (!/^[A-Za-z0-9_-]+$/.test(name)) { setNotice('Server name: letters, digits, - _ only'); return }
+
+    setCustomSubmitting(true); setNotice('')
+    try {
+      let server: McpServer
+      if (customTransport === 'stdio') {
+        const cmd = customCommand.trim()
+        if (!cmd) { setNotice('Command is required for stdio MCP'); return }
+        server = {
+          serverName: name,
+          transport: 'stdio',
+          command: cmd,
+          args: customArgs.trim() ? customArgs.trim().split(/\s+/) : [],
+          ...(customCwd.trim() && { cwd: customCwd.trim() }),
+          ...(parseKeyValue(customEnv) && { env: parseKeyValue(customEnv)! }),
+        }
+      } else {
+        const url = customUrl.trim()
+        if (!url) { setNotice('URL is required for HTTP MCP'); return }
+        server = {
+          serverName: name,
+          transport: 'streamable-http',
+          url,
+          ...(parseKeyValue(customHeaders) && { headers: parseKeyValue(customHeaders)! }),
+        }
+      }
+
+      const result = await getApi().installMcpServer(server)
+      setNotice(result.ok ? `✓ ${result.message}` : `✗ ${result.message ?? 'Install failed'}`)
+      if (result.ok) {
+        // Reset form
+        setCustomOpen(false)
+        setCustomName(''); setCustomCommand(''); setCustomArgs('')
+        setCustomUrl(''); setCustomCwd('')
+        setCustomEnv(''); setCustomHeaders('')
+        void refreshInstalled()
+      }
+    } finally { setCustomSubmitting(false) }
+  }
+
   const handleUninstall = async (serverName: string) => {
     if (!window.confirm(`Remove MCP server "${serverName}"?`)) return
     const result = await getApi().uninstallMcpServer(serverName)
@@ -95,6 +174,89 @@ export function McpServersTab() {
         </div>
       </div>
     )}
+
+    {/* Add Custom MCP section */}
+    <div className="integrations-section">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <h3>Add Custom MCP Server</h3>
+        <button className="primary" onClick={() => setCustomOpen((v) => !v)}>
+          {customOpen ? 'Close' : '+ Add Custom'}
+        </button>
+      </div>
+      {customOpen && (
+        <div className="custom-mcp-form" style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 12, background: 'var(--settings-card-bg, #1a1a2e)', borderRadius: 8 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontWeight: 600 }}>Transport:</span>
+            <select value={customTransport} onChange={(e) => setCustomTransport(e.target.value as TransportKind)}
+              style={{ padding: '4px 8px', borderRadius: 4 }}>
+              <option value="stdio">stdio (local process)</option>
+              <option value="streamable-http">streamable-http (remote URL)</option>
+            </select>
+          </label>
+          <label>
+            <span style={{ fontWeight: 600, display: 'block', marginBottom: 2 }}>Server Name</span>
+            <input className="search-input" style={{ width: '100%' }}
+              placeholder="my-mcp (letters, digits, - _ only)"
+              value={customName} onChange={(e) => setCustomName(e.target.value)}
+              maxLength={32} />
+          </label>
+          {customTransport === 'stdio' ? (
+            <>
+              <label>
+                <span style={{ fontWeight: 600, display: 'block', marginBottom: 2 }}>Command</span>
+                <input className="search-input" style={{ width: '100%' }}
+                  placeholder="npx / node / python3 / /path/to/binary"
+                  value={customCommand} onChange={(e) => setCustomCommand(e.target.value)} />
+              </label>
+              <label>
+                <span style={{ fontWeight: 600, display: 'block', marginBottom: 2 }}>Args (space-separated)</span>
+                <input className="search-input" style={{ width: '100%' }}
+                  placeholder="-y @modelcontextprotocol/server-filesystem"
+                  value={customArgs} onChange={(e) => setCustomArgs(e.target.value)} />
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <label>
+                  <span style={{ fontWeight: 600, display: 'block', marginBottom: 2 }}>CWD (optional)</span>
+                  <input className="search-input" style={{ width: '100%' }}
+                    placeholder="/path/to/working/dir"
+                    value={customCwd} onChange={(e) => setCustomCwd(e.target.value)} />
+                </label>
+                <label>
+                  <span style={{ fontWeight: 600, display: 'block', marginBottom: 2 }}>Env Vars (k=v lines or JSON)</span>
+                  <textarea className="search-input" style={{ width: '100%', minHeight: 60 }}
+                    placeholder={`API_KEY={env:MY_API_KEY}\nDEBUG=true`}
+                    value={customEnv} onChange={(e) => setCustomEnv(e.target.value)} />
+                </label>
+              </div>
+            </>
+          ) : (
+            <>
+              <label>
+                <span style={{ fontWeight: 600, display: 'block', marginBottom: 2 }}>URL</span>
+                <input className="search-input" style={{ width: '100%' }}
+                  placeholder="https://api.example.com/mcp"
+                  value={customUrl} onChange={(e) => setCustomUrl(e.target.value)} />
+              </label>
+              <label>
+                <span style={{ fontWeight: 600, display: 'block', marginBottom: 2 }}>Headers (k=v lines or JSON, optional)</span>
+                <textarea className="search-input" style={{ width: '100%', minHeight: 60 }}
+                  placeholder={`Authorization=Bearer {env:MY_TOKEN}\nContent-Type=application/json`}
+                  value={customHeaders} onChange={(e) => setCustomHeaders(e.target.value)} />
+              </label>
+            </>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+            <button className="primary danger" onClick={() => {
+              setCustomOpen(false); setCustomName(''); setCustomCommand(''); setCustomArgs('')
+              setCustomUrl(''); setCustomCwd(''); setCustomEnv(''); setCustomHeaders('')
+            }}>Reset</button>
+            <button className="primary" onClick={() => void handleCustomInstall()} disabled={customSubmitting}>
+              {customSubmitting ? 'Adding…' : 'Add MCP Server'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
 
     {/* Search section */}
     <div className="integrations-section">
@@ -151,7 +313,7 @@ export function McpServersTab() {
   </section>
 }
 
-// --- Bundle Plugins Tab ---
+// --- Runtime Extensions Tab (formerly Bundle Plugins) ---
 
 export function PluginsTab() {
   const [query, setQuery] = useState('')
@@ -203,8 +365,8 @@ export function PluginsTab() {
 
   return <section className="settings-page integrations-page">
     <div className="settings-page-intro">
-      <p>Bundle Plugins</p>
-      <small>DSH bundle plugins add new capabilities to the Host. Install them here — Narwhal manages the npm install and cordis.patch.yml wiring.</small>
+      <p>Runtime Extensions</p>
+      <small>DSH framework-level extensions. These are Cordis plugin bundles that add new capabilities to the Agent runtime itself — e.g. sandbox shells, credential management, session tracking. Not skill/mcp collections; they are the framework that loads skills and MCPs.</small>
     </div>
 
     {installed.length > 0 && (
