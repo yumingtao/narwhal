@@ -21,16 +21,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'pnpm'
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: latest
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -50,6 +50,21 @@ jobs:
             --mac dmg zip \
             --arm64 \
             --publish never
+
+      - name: Verify artifacts
+        run: |
+          echo "=== Artifacts ==="
+          ls -lh release/
+          DMG=$(find release -name '*.dmg' | head -1)
+          ZIP=$(find release -name '*.zip' | head -1)
+          if [ -z "$DMG" ]; then echo "ERROR: DMG not found"; exit 1; fi
+          if [ -z "$ZIP" ]; then echo "ERROR: ZIP not found"; exit 1; fi
+          DMG_SIZE=$(stat -f%z "$DMG" 2>/dev/null || stat -c%s "$DMG" 2>/dev/null || echo 0)
+          ZIP_SIZE=$(stat -f%z "$ZIP" 2>/dev/null || stat -c%s "$ZIP" 2>/dev/null || echo 0)
+          if [ "$DMG_SIZE" -lt 10000000 ]; then echo "ERROR: DMG too small ($DMG_SIZE bytes, expected >10MB)"; exit 1; fi
+          if [ "$ZIP_SIZE" -lt 10000000 ]; then echo "ERROR: ZIP too small ($ZIP_SIZE bytes, expected >10MB)"; exit 1; fi
+          echo "✅ DMG: $DMG ($DMG_SIZE bytes)"
+          echo "✅ ZIP: $ZIP ($ZIP_SIZE bytes)"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

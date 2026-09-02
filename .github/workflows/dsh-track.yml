@@ -17,15 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
           version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies (for semver)
+        run: pnpm install --frozen-lockfile
 
       - name: Resolve upstream npm latest
         id: upstream
@@ -48,23 +52,26 @@ jobs:
           echo "locked version: $LOCKED"
           echo "locked=$LOCKED" >> "$GITHUB_OUTPUT"
 
-      - name: Compare versions
+      - name: Compare versions (semver-aware)
         id: compare
         run: |
           UPSTREAM="${{ steps.upstream.outputs.version }}"
           LOCKED="${{ steps.current.outputs.locked }}"
           echo "Comparing locked=$LOCKED vs upstream=$UPSTREAM"
-          if [ "$UPSTREAM" = "$LOCKED" ]; then
-            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
-          else
+          # Use semver.gt for proper comparison (handles pre-releases, major/minor/patch correctly)
+          RESULT=$(node -e "const semver=require('semver'); if (!semver.valid(process.argv[1]) || !semver.valid(process.argv[2])) { console.log('invalid'); process.exit(0); } console.log(semver.gt(process.argv[1], process.argv[2]) ? 'outdated' : 'up-to-date')" "$UPSTREAM" "$LOCKED")
+          echo "compare result: $RESULT"
+          if [ "$RESULT" = "outdated" ]; then
             echo "status=outdated" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=up-to-date" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Log result
         run: |
           STATUS="${{ steps.compare.outputs.status }}"
           if [ "$STATUS" = "up-to-date" ]; then
-            echo "✅ DSH runtime is already at latest. Nothing to do."
+            echo "✅ DSH runtime is already at latest (or ahead). Nothing to do."
           else
             echo "🔔 New version available!"
             echo "  Locked:   ${{ steps.current.outputs.locked }}"
@@ -96,6 +103,18 @@ jobs:
 
           git diff
 
+      - name: Verify build after bump
+        if: steps.compare.outputs.status == 'outdated'
+        run: |
+          export DSH_RUNTIME_SOURCE="npm@${{ steps.upstream.outputs.version }}"
+          echo "=== Stage runtime ==="
+          pnpm run stage:runtime
+          echo "=== Type check ==="
+          pnpm typecheck
+          echo "=== Build ==="
+          pnpm build
+          echo "✅ Runtime + build verified."
+
       - name: Create Pull Request
         if: steps.compare.outputs.status == 'outdated'
         uses: peter-evans/create-pull-request@v7
@@ -112,12 +131,10 @@ jobs:
             | Upstream latest | `${{ steps.upstream.outputs.version }}` |
             | Source | `@deepseek-ai/dsh` npm dist-tag `latest` |
 
-            **To verify**:
-            \`\`\`bash
-            DSH_RUNTIME_SOURCE=npm@${{ steps.upstream.outputs.version }} pnpm run stage:runtime
-            pnpm run build
-            pnpm run package:mac
-            \`\`\`
+            **CI verification already passed**:
+            - `pnpm run stage:runtime` ✅
+            - `pnpm typecheck` ✅
+            - `pnpm build` ✅
 
             _Opened by `dsh-track.yml` scheduled workflow._
           labels: |
