@@ -137,17 +137,25 @@ Narwhal follows a strict security boundary between the renderer (UI) and the run
 
 - Node.js 22+
 - pnpm
-- A local [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) checkout for development mode
 
 ```sh
 # Install dependencies
 pnpm install
 
+# Stage the DSH runtime (fetches the pinned version of @deepseek-ai/dsh from npm)
+pnpm stage:runtime
+
 # Run in development mode
 pnpm dev
 ```
 
-Development mode (`pnpm dev`) expects a DeepSeek Harness checkout adjacent to this repo at `../DeepSeek-Harness` by default. Without it, the local Agent runtime cannot start. To point elsewhere, set `DSH_RUNTIME_ROOT`. Set `DSH_NODE_EXECUTABLE` when the appropriate Node binary is not on `PATH`.
+Runtime discovery priority (dev mode):
+1. `config.json` → `runtime.root` override
+2. `DSH_RUNTIME_ROOT` environment variable
+3. **`runtime/dsh/`** (npm-staged — primary path, produced by `pnpm stage:runtime`)
+4. `../DeepSeek-Harness/` (source checkout — for Harness core development)
+
+Set `DSH_NODE_EXECUTABLE` when the appropriate Node binary is not on `PATH`. See [`runtime/manifest.json`](runtime/manifest.json) for the pinned runtime version (`npm@0.1.1-rc.2`).
 
 ## Configuration
 
@@ -201,7 +209,7 @@ Edit `config.json` (or use the in-app Settings UI), then restart Narwhal for cha
     "enabled": true,
     "customDirs": ["~/.config/narwhal/skills"]
   },
-  "bundlePlugins": ["dsh-web-app"],
+  "bundlePlugins": ["@deepseek-ai/dsh-sandbox"],
   "mcpServers": [
     {
       "serverName": "filesystem",
@@ -228,7 +236,7 @@ Narwhal has three tiers of extensibility, all managed through the **Integrations
 
 | Tier | What it is | Where it lives | Install flow |
 | --- | --- | --- | --- |
-| **Runtime Extensions** | Cordis framework plugins (npm packages with JS) — e.g. sandbox shells, credential manager, MCP protocol client | `<dsh-home>/profiles/web/node_modules/` | `dsh plugin add <package>` → tracked in `config.json.bundlePlugins` |
+| **Runtime Extensions** | Cordis framework plugins (npm packages with JS) — e.g. sandbox shells, credential manager, MCP protocol client | Installed to `<dsh-home>/profiles/web/node_modules/`; symlinked to `<dsh-home>/profiles/node_modules/` for Node resolution | Settings UI Install button → `config.json.bundlePlugins[]` |
 | **MCP Servers** | Tool servers exposing JSON-RPC tools to the Agent | Config-only (no code downloaded) — DSH spawns them at runtime | Registry search **or** Add Custom form → `config.json.mcpServers[]` |
 | **Skills** | Markdown guidance packages (`SKILL.md` + optional resources) that steer Agent behavior | `~/.config/narwhal/skills/<name>/SKILL.md` | URL paste (GitHub raw or git repo) → `config.json.skills.customDirs[]` + `enabled=true` |
 
@@ -331,13 +339,17 @@ pnpm build
 pnpm dev
 ```
 
-The project defaults to an adjacent `../DeepSeek-Harness` checkout, pinned in [`runtime/manifest.json`](runtime/manifest.json).
+The pinned runtime version is declared in both `package.json.dshRuntime` (`npm@0.1.1-rc.2`) and [`runtime/manifest.json`](runtime/manifest.json). The `pnpm stage:runtime` script installs that exact version of `@deepseek-ai/dsh` into `runtime/dsh/` so it can be auto-discovered at startup.
 
 ## Packaging
 
-Stage a verified closed runtime from the local upstream source and build the artifacts:
+`pnpm package:mac` runs `build` + `stage:runtime` + `electron-builder`. The stage script reads `package.json.dshRuntime` (`npm@0.1.1-rc.2`) and installs the pinned `@deepseek-ai/dsh` into `runtime/dsh/`, which electron-builder then copies into the app bundle.
 
 ```sh
+# Build the DMG + ZIP (uses pinned npm runtime)
+pnpm package:mac
+
+# Or stage from a local DeepSeek-Harness source checkout (for Harness developers)
 DSH_RUNTIME_SOURCE=/absolute/path/to/DeepSeek-Harness pnpm package:mac
 ```
 
