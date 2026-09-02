@@ -375,9 +375,9 @@ export function PluginsTab() {
         <div className="mcp-list">
           {installed.map((p) => (
             <article key={p.packageName} className="mcp-row">
-              <div className="mcp-row-info">
+              <div className="mcp-row-info" title={p.location}>
                 <strong>{p.packageName}</strong>
-                <small>v{p.version} · {p.location}</small>
+                <small>v{p.version}</small>
               </div>
               <button className="primary danger" onClick={() => handleUninstall(p.packageName)}>Uninstall</button>
             </article>
