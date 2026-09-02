@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/hero-desktop.png" alt="Narwhal — Local AI Agent" width="100%">
+  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal — Local AI Agent (Dark)" width="100%">
 </p>
 
 ## What is Narwhal?
@@ -42,6 +42,7 @@ Narwhal is designed for anyone who wants the power of DeepSeek Harness without c
 - Narwhal-owned local Agent conversations with Work / Activity view, real history loading, and prompt cancellation
 - Main-process-only loopback BFF with fixed Host origin and allow-listed session RPCs
 - Narrow typed IPC bridge with no Node/shell/FS access from the renderer
+- **Integrations marketplace** — search, install, and manage MCP servers, Runtime Extensions (Cordis plugins), and Skills. All changes persist in `config.json` and sync to the DSH runtime. Add Custom MCP form supports stdio (self-developed JS processes) and streamable-http (remote endpoints).
 
 **Deferred (not in V1):**
 - File/image uploads, approval and question-answer screens
@@ -90,20 +91,45 @@ Narwhal follows a strict security boundary between the renderer (UI) and the run
 
 ## Screenshots
 
-<p align="center">
-  <img src="assets/screenshots/workbench.png" alt="Narwhal Workbench — Packaged Application" width="100%">
-  <sub>Packaged workbench with workspace picker and activity view.</sub>
-</p>
+<details>
+<summary><strong>Workbench</strong></summary>
 
 <p align="center">
-  <img src="assets/screenshots/layout.png" alt="Narwhal — Layout Overview" width="100%">
-  <sub>Main layout with conversation, plan, and activity panels.</sub>
+  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal Workbench — Dark Theme" width="100%">
+  <sub>Main workbench with workspace picker, composer controls, and chat view. Dark theme.</sub>
 </p>
 
+</details>
+
+<details>
+<summary><strong>Integrations — MCP Servers</strong></summary>
+
 <p align="center">
-  <img src="assets/screenshots/settings.png" alt="Narwhal Settings — Sidebar" width="100%">
-  <sub>Settings sidebar with provider configuration.</sub>
+  <img src="assets/screenshots/mcp-servers-dark.png" alt="MCP Servers — Integrations" width="100%">
+  <sub>Search the public MCP registry, install with one click, or add a self-developed MCP server manually (stdio or streamable-http transport).</sub>
 </p>
+
+</details>
+
+<details>
+<summary><strong>Integrations — Runtime Extensions</strong></summary>
+
+<p align="center">
+  <img src="assets/screenshots/runtime-extensions-dark.png" alt="Runtime Extensions — Integrations" width="100%">
+  <sub>Browse and install DSH Cordis plugin bundles — framework-level extensions that add new capabilities to the Agent runtime (sandbox shells, credential management, MCP protocol client, etc.).</sub>
+</p>
+
+</details>
+
+<details>
+<summary><strong>Integrations — Skills</strong></summary>
+
+<p align="center">
+  <img src="assets/screenshots/skills-dark.png" alt="Skills — Integrations" width="100%">
+  <sub>Add Markdown skill packs from GitHub raw URLs or git repositories. Installed skills land in <code>~/.config/narwhal/skills/</code> and are loaded into the Agent's system prompt.</sub>
+</p>
+
+</details>
 
 ## Quick Start
 
@@ -173,8 +199,9 @@ Edit `config.json` (or use the in-app Settings UI), then restart Narwhal for cha
   },
   "skills": {
     "enabled": true,
-    "customDirs": ["~/my-skills", "./.narwhal/skills"]
+    "customDirs": ["~/.config/narwhal/skills"]
   },
+  "bundlePlugins": ["dsh-web-app"],
   "mcpServers": [
     {
       "serverName": "filesystem",
@@ -194,6 +221,18 @@ Edit `config.json` (or use the in-app Settings UI), then restart Narwhal for cha
   ]
 }
 ```
+
+### Integrations: MCP · Runtime Extensions · Skills
+
+Narwhal has three tiers of extensibility, all managed through the **Integrations** settings panel:
+
+| Tier | What it is | Where it lives | Install flow |
+| --- | --- | --- | --- |
+| **Runtime Extensions** | Cordis framework plugins (npm packages with JS) — e.g. sandbox shells, credential manager, MCP protocol client | `<dsh-home>/profiles/web/node_modules/` | `dsh plugin add <package>` → tracked in `config.json.bundlePlugins` |
+| **MCP Servers** | Tool servers exposing JSON-RPC tools to the Agent | Config-only (no code downloaded) — DSH spawns them at runtime | Registry search **or** Add Custom form → `config.json.mcpServers[]` |
+| **Skills** | Markdown guidance packages (`SKILL.md` + optional resources) that steer Agent behavior | `~/.config/narwhal/skills/<name>/SKILL.md` | URL paste (GitHub raw or git repo) → `config.json.skills.customDirs[]` + `enabled=true` |
+
+Every change writes to `config.json` and `syncToDsh()` regenerates `cordis.patch.yml`, which DSH loads at next startup.
 
 ### API Keys
 
@@ -259,15 +298,15 @@ Narwhal's skill system is disabled by default. Enable it to give the Agent persi
 ```jsonc
 "skills": {
   "enabled": true,
-  "customDirs": ["~/narwhal-skills", "./.dsh/skills"],
+  "customDirs": ["~/.config/narwhal/skills", "./my-skills"],
   "bundledDir": "/opt/narwhal/skills"
 }
 ```
 
 | Field | Description |
 | --- | --- |
-| `enabled` | Enable skill loading. When `true`, Narwhal writes three DSH plugin entries (`skill-filesystem`, `tool-skill`, `skill-badge`) into `cordis.patch.yml`. |
-| `customDirs` | Absolute paths to additional skill directories that will be scanned. Each directory should contain folders named after individual skills, with a `SKILL.md` at the root of each folder. |
+| `enabled` | Enable skill loading. When `true`, Narwhal writes the `skill-filesystem` DSH plugin entry into `cordis.patch.yml`. |
+| `customDirs` | Absolute paths to directories containing skill folders. Each folder has a `SKILL.md` at its root. Default install path is `~/.config/narwhal/skills` (written by the Integrations UI). |
 | `bundledDir` | Optional path to a bundled skill directory distributed alongside Narwhal itself. |
 
 ### Configuration Schema

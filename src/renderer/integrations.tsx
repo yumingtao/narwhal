@@ -313,7 +313,7 @@ export function McpServersTab() {
   </section>
 }
 
-// --- Runtime Extensions Tab (formerly Bundle Plugins) ---
+// --- Runtime Extensions Tab ---
 
 export function PluginsTab() {
   const [query, setQuery] = useState('')
