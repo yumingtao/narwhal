@@ -504,7 +504,7 @@ export function SkillsTab() {
       {loading ? (
         <p className="settings-empty">Scanning skill directories…</p>
       ) : skills.length === 0 ? (
-        <p className="settings-empty">No skills found. Add one from a URL above, or create a SKILL.md in ~/.dsh/skills/.</p>
+        <p className="settings-empty">No skills found. Add one from a URL above, or create a SKILL.md in ~/.config/narwhal/skills/.</p>
       ) : (
         <div className="card-grid">
           {skills.map((skill) => (
