@@ -100,6 +100,8 @@ const NARWHAL_COMMANDS_PKG_JSON = JSON.stringify({
   version: '1.0.0',
   type: 'module',
   main: 'index.js',
+  dsh: { bundle: { id: 'narwhal-commands' } },
+  keywords: ['dsh-plugin', 'deepseek-harness', 'narwhal'],
 }, null, 2)
 
 // ── Public API ─────────────────────────────────────────────────────────────

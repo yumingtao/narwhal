@@ -689,6 +689,19 @@ const _mockBridge = Object.freeze({
     return delay(undefined)
   },
 
+  // ── Integrations stubs (browser preview) ──
+  searchMcpServers: async (_query: string, _limit?: number) => delay([]),
+  listInstalledMcpServers: async () => delay([]),
+  installMcpServer: async (_server: any) => delay({ ok: true, message: 'Installed (mock)' }),
+  uninstallMcpServer: async (_serverName: string) => delay({ ok: true, message: 'Uninstalled (mock)' }),
+  searchPlugins: async (_query: string) => delay([]),
+  listInstalledPlugins: async () => delay([]),
+  installPlugin: async (_packageName: string) => delay({ ok: true, message: 'Plugin installed (mock)' }),
+  uninstallPlugin: async (_packageName: string) => delay({ ok: true, message: 'Plugin uninstalled (mock)' }),
+  listSkills: async () => delay([]),
+  installSkillFromUrl: async (_url: string) => delay({ ok: true, message: 'Skill installed (mock)' }),
+  removeSkill: async (_id: string) => delay({ ok: true, message: 'Skill removed (mock)' }),
+
   getConfig: async () => delay(mockNarwhalConfig),
   saveConfig: async (patch: Partial<NarwhalConfig>) => delay({ ...mockNarwhalConfig, ...patch } as NarwhalConfig),
   getConfigPath: async () => delay('~/.config/narwhal/config.json'),

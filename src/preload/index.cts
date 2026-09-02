@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, Command, CommandResult, ConversationStatus, CreateProviderResult, DesktopSettings, NarwhalBridge, NarwhalConfig, WorkbenchSnapshot } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, BundlePluginCard, Command, CommandResult, ConversationStatus, CreateProviderResult, DesktopSettings, InstallResult, InstalledPlugin, McpServer, McpServerCard, NarwhalBridge, NarwhalConfig, SkillCard, WorkbenchSnapshot } from '../shared/desktop-contract.js'
 
 const invoke = <T,>(channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload) as Promise<T>
 const bridge: NarwhalBridge = Object.freeze({
@@ -39,6 +39,18 @@ const bridge: NarwhalBridge = Object.freeze({
   getConfig: () => invoke<NarwhalConfig>('narwhal:get-config'),
   saveConfig: (patch: Partial<NarwhalConfig>) => invoke<NarwhalConfig>('narwhal:save-config', patch),
   getConfigPath: () => invoke<string>('narwhal:get-config-path'),
+  // --- Integrations ---
+  searchMcpServers: (query: string, limit?: number) => invoke<readonly McpServerCard[]>('narwhal:search-mcp-servers', { query, limit }),
+  listInstalledMcpServers: () => invoke<readonly McpServer[]>('narwhal:list-installed-mcp-servers'),
+  installMcpServer: (server: McpServer) => invoke<InstallResult>('narwhal:install-mcp-server', server),
+  uninstallMcpServer: (serverName: string) => invoke<InstallResult>('narwhal:uninstall-mcp-server', { serverName }),
+  searchPlugins: (query: string) => invoke<readonly BundlePluginCard[]>('narwhal:search-plugins', { query }),
+  listInstalledPlugins: () => invoke<readonly InstalledPlugin[]>('narwhal:list-installed-plugins'),
+  installPlugin: (packageName: string) => invoke<InstallResult>('narwhal:install-plugin', { packageName }),
+  uninstallPlugin: (packageName: string) => invoke<InstallResult>('narwhal:uninstall-plugin', { packageName }),
+  listSkills: () => invoke<readonly SkillCard[]>('narwhal:list-skills'),
+  installSkillFromUrl: (url: string) => invoke<InstallResult>('narwhal:install-skill-from-url', { url }),
+  removeSkill: (id: string) => invoke<InstallResult>('narwhal:remove-skill', { id }),
   onAgentState: (listener: (state: AgentSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: AgentSnapshot) => listener(state)
     ipcRenderer.on('narwhal:agent-state', handler)

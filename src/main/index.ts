@@ -4,11 +4,13 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell, Tray } from 'electron'
-import type { AgentConfiguration, AgentConversation, AgentSnapshot, Conversation, ConversationStatus, CreateProviderResult, Deliverable, DesktopSettings, GitChange, TodoItem, WorkbenchSnapshot, Workspace } from '../shared/desktop-contract.js'
+import type { AgentConfiguration, AgentConversation, AgentSnapshot, Conversation, ConversationStatus, CreateProviderResult, Deliverable, DesktopSettings, GitChange, TodoItem, WorkbenchSnapshot, Workspace, McpServer, McpServerCard, BundlePluginCard, InstalledPlugin, SkillCard, InstallResult } from '../shared/desktop-contract.js'
 import { createHostSupervisor, type HostGeneration } from './host-supervisor.js'
 import { HostBridge } from './host-bridge.js'
 import { resolveRuntime, type DshRuntime } from './runtime.js'
 import { loadConfig, getConfig, getLoadError, saveConfig, getConfigPath, syncToDsh, getDshHome } from './config.js'
+import { searchMcpServers as registrySearchMcp, searchPlugins as registrySearchPlugins, discoverSkills } from './registry-client.js'
+import { installBundlePlugin, uninstallBundlePlugin, listInstalledBundlePlugins, installMcpServerToConfig, uninstallMcpServerFromConfig, installSkillFromUrl, removeSkillById, getSkillDirs } from './install-executor.js'
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'narwhal', privileges: { secure: true, standard: true, supportFetchAPI: true } }])
 const recoveryUrl = new URL('../recovery/index.html', import.meta.url).toString()
@@ -274,6 +276,114 @@ function registerIpc(): void {
       try { await appendFile(join(app.getPath('logs'), 'startup.log'), msg, { encoding: 'utf8', mode: 0o600 }) } catch { /* best-effort */ }
       throw error
     }
+  })
+
+  // --- Integrations: MCP / Plugins / Skills ---
+
+  ipcMain.handle('narwhal:search-mcp-servers', async (_event, raw): Promise<readonly McpServerCard[]> => {
+    const q = typeof raw === 'string' ? raw : (raw && typeof (raw as any).query === 'string' ? (raw as any).query : '')
+    const limit = raw && typeof (raw as any).limit === 'number' ? (raw as any).limit : 24
+    return registrySearchMcp(q, limit)
+  })
+
+  ipcMain.handle('narwhal:list-installed-mcp-servers', async (): Promise<readonly McpServer[]> => {
+    const cfg = getConfig() as any
+    const servers = (cfg.mcpServers ?? []) as McpServer[]
+    return servers
+  })
+
+  ipcMain.handle('narwhal:install-mcp-server', async (_event, raw): Promise<InstallResult> => {
+    if (!raw || typeof raw !== 'object') return { ok: false, message: 'Invalid server payload' }
+    const server = raw as McpServer
+    const cfg = getConfig() as any
+    const currentServers = (cfg.mcpServers ?? []) as McpServer[]
+    const { next } = installMcpServerToConfig(currentServers, server)
+    const updated = saveConfig({ ...cfg, mcpServers: next } as any)
+    // Sync to DSH (writes cordis.patch.yml + settings.yaml)
+    try { await syncToDsh() } catch (err) {
+      console.warn('[narwhal] syncToDsh after MCP install failed:', err instanceof Error ? err.message : err)
+    }
+    return { ok: true, message: `MCP server "${server.serverName}" installed` }
+  })
+
+  ipcMain.handle('narwhal:uninstall-mcp-server', async (_event, raw): Promise<InstallResult> => {
+    const serverName = typeof raw === 'string' ? raw : (raw && typeof (raw as any).serverName === 'string' ? (raw as any).serverName : '')
+    if (!serverName) return { ok: false, message: 'serverName required' }
+    const cfg = getConfig() as any
+    const currentServers = (cfg.mcpServers ?? []) as McpServer[]
+    const { next, wasRemoved } = uninstallMcpServerFromConfig(currentServers, serverName)
+    if (!wasRemoved) return { ok: false, message: `MCP server "${serverName}" not found` }
+    saveConfig({ ...cfg, mcpServers: next } as any)
+    try { await syncToDsh() } catch (err) {
+      console.warn('[narwhal] syncToDsh after MCP uninstall failed:', err instanceof Error ? err.message : err)
+    }
+    return { ok: true, message: `MCP server "${serverName}" removed` }
+  })
+
+  ipcMain.handle('narwhal:search-plugins', async (_event, raw): Promise<readonly BundlePluginCard[]> => {
+    const q = typeof raw === 'string' ? raw : (raw && typeof (raw as any).query === 'string' ? (raw as any).query : '')
+    return registrySearchPlugins(q)
+  })
+
+  ipcMain.handle('narwhal:list-installed-plugins', async (): Promise<readonly InstalledPlugin[]> => {
+    const dshHome = getDshHome()
+    return listInstalledBundlePlugins(dshHome, 'web')
+  })
+
+  ipcMain.handle('narwhal:install-plugin', async (_event, raw): Promise<InstallResult> => {
+    const pkg = typeof raw === 'string' ? raw : (raw && typeof (raw as any).packageName === 'string' ? (raw as any).packageName : '')
+    if (!pkg) return { ok: false, message: 'packageName required' }
+    const dshHome = getDshHome()
+    const runtime = selectedRuntime?.root ?? ''
+    if (!runtime) return { ok: false, message: 'DSH runtime not available' }
+    const logs: string[] = []
+    const result = await installBundlePlugin(dshHome, runtime, 'web', pkg, (line) => logs.push(line))
+    return { ...result, logs }
+  })
+
+  ipcMain.handle('narwhal:uninstall-plugin', async (_event, raw): Promise<InstallResult> => {
+    const pkg = typeof raw === 'string' ? raw : (raw && typeof (raw as any).packageName === 'string' ? (raw as any).packageName : '')
+    if (!pkg) return { ok: false, message: 'packageName required' }
+    const dshHome = getDshHome()
+    const runtime = selectedRuntime?.root ?? ''
+    if (!runtime) return { ok: false, message: 'DSH runtime not available' }
+    const logs: string[] = []
+    const result = await uninstallBundlePlugin(dshHome, runtime, 'web', pkg, (line) => logs.push(line))
+    return { ...result, logs }
+  })
+
+  ipcMain.handle('narwhal:list-skills', async (): Promise<readonly SkillCard[]> => {
+    const dshHome = getDshHome()
+    const roots = getSkillDirs(dshHome)
+    const cards: SkillCard[] = []
+    for (const root of roots) {
+      cards.push(...discoverSkills([root]))
+    }
+    // Also include config customSkillDirs
+    const cfg = getConfig() as any
+    const skillCustomDirs: string[] = cfg.skills?.customDirs ?? []
+    if (skillCustomDirs.length) cards.push(...discoverSkills(skillCustomDirs))
+    // Dedupe by id
+    const seen = new Set<string>()
+    const unique: SkillCard[] = []
+    for (const c of cards) { if (!seen.has(c.id)) { seen.add(c.id); unique.push(c) } }
+    return unique
+  })
+
+  ipcMain.handle('narwhal:install-skill-from-url', async (_event, raw): Promise<InstallResult> => {
+    const url = typeof raw === 'string' ? raw : (raw && typeof (raw as any).url === 'string' ? (raw as any).url : '')
+    if (!url) return { ok: false, message: 'url required' }
+    const dshHome = getDshHome()
+    const logs: string[] = []
+    const result = await installSkillFromUrl(dshHome, url, (line) => logs.push(line))
+    return { ...result, logs }
+  })
+
+  ipcMain.handle('narwhal:remove-skill', async (_event, raw): Promise<InstallResult> => {
+    const id = typeof raw === 'string' ? raw : (raw && typeof (raw as any).id === 'string' ? (raw as any).id : '')
+    if (!id) return { ok: false, message: 'id required' }
+    const dshHome = getDshHome()
+    return removeSkillById(dshHome, id)
   })
 }
 async function bootstrap(): Promise<void> {

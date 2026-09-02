@@ -44,6 +44,64 @@ export interface AgentConfiguration { readonly available: boolean; readonly writ
 export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean }
 export interface Command { readonly name: string; readonly description: string; readonly input?: { readonly hint?: string; readonly images?: boolean } }
 export interface CommandResult { readonly kind: 'success' | 'error'; readonly text?: string }
+// --- Integrations: MCP / Plugins / Skills ---
+export interface McpServerCard {
+  readonly name: string                // e.g. "io.github.modelcontextprotocol/server-github"
+  readonly displayName: string         // e.g. "GitHub"
+  readonly description: string
+  readonly packageName: string         // e.g. "@modelcontextprotocol/server-github"
+  readonly packageType: 'npm' | 'python' | 'docker'
+  readonly version?: string
+  readonly stars?: number
+  readonly repositoryUrl?: string
+  readonly homepageUrl?: string
+  readonly tags: readonly string[]
+}
+export interface McpServerStdio {
+  readonly serverName: string
+  readonly transport: 'stdio'
+  readonly command: string
+  readonly args: readonly string[]
+  readonly env?: ReadonlyRecord<string, string>
+  readonly cwd?: string
+}
+export interface McpServerHttp {
+  readonly serverName: string
+  readonly transport: 'streamable-http'
+  readonly url: string
+  readonly headers?: ReadonlyRecord<string, string>
+}
+export type McpServer = McpServerStdio | McpServerHttp
+export interface BundlePluginCard {
+  readonly packageName: string         // npm package name with dsh.bundle declaration
+  readonly displayName: string
+  readonly description: string
+  readonly version?: string
+  readonly stars?: number
+  readonly repositoryUrl?: string
+  readonly bundleIds: readonly string[] // declared cordis bundle IDs
+  readonly tags: readonly string[]
+}
+export interface InstalledPlugin {
+  readonly packageName: string
+  readonly version: string
+  readonly enabled: boolean
+  readonly location: string            // resolved path
+}
+export interface SkillCard {
+  readonly id: string                  // unique skill identifier
+  readonly name: string
+  readonly description: string
+  readonly source: 'builtin' | 'custom' | 'market'
+  readonly location: string             // file path
+  readonly installed: boolean
+  readonly tags: readonly string[]
+}
+export interface InstallResult {
+  readonly ok: boolean
+  readonly message?: string
+  readonly logs?: readonly string[]
+}
 export interface NarwhalBridge {
   bootstrap(): Promise<{ readonly agent: AgentSnapshot; readonly workbench: WorkbenchSnapshot; readonly settings: DesktopSettings; readonly config: NarwhalConfig; readonly configLoadError?: string }>
   chooseWorkspace(): Promise<WorkbenchSnapshot>
@@ -78,6 +136,18 @@ export interface NarwhalBridge {
   getConfig(): Promise<NarwhalConfig>
   saveConfig(patch: Partial<NarwhalConfig>): Promise<NarwhalConfig>
   getConfigPath(): Promise<string>
+  // --- Integrations ---
+  searchMcpServers(query: string, limit?: number): Promise<readonly McpServerCard[]>
+  listInstalledMcpServers(): Promise<readonly McpServer[]>
+  installMcpServer(server: McpServer): Promise<InstallResult>
+  uninstallMcpServer(serverName: string): Promise<InstallResult>
+  searchPlugins(query: string): Promise<readonly BundlePluginCard[]>
+  listInstalledPlugins(): Promise<readonly InstalledPlugin[]>
+  installPlugin(packageName: string): Promise<InstallResult>
+  uninstallPlugin(packageName: string): Promise<InstallResult>
+  listSkills(): Promise<readonly SkillCard[]>
+  installSkillFromUrl(url: string): Promise<InstallResult>
+  removeSkill(id: string): Promise<InstallResult>
   onAgentState(listener: (state: AgentSnapshot) => void): () => void
   onConversation(listener: (conversation: AgentConversation) => void): () => void
   onWorkbench(listener: (workbench: WorkbenchSnapshot) => void): () => void
