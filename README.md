@@ -1,8 +1,8 @@
 <h1 align="center">Narwhal</h1>
 <p align="center">
-  <strong>A local-first, privacy-first AI agent.</strong>
+  <strong>A local-first, privacy-first <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> desktop app.</strong>
 
-  Runs a compatible Harness runtime on loopback only. Owns every conversation, project, and work-context surface.
+  An Electron-based desktop shell that runs a compatible DeepSeek Harness runtime on loopback only. Manage your own AI agent workbench, MCP servers, Cordis plugins (runtime extensions), and skills — all locally, with zero cloud lock-in.
 </p>
 
 <p align="center">
@@ -14,8 +14,14 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal — Local AI Agent (Dark)" width="100%">
+  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal — DeepSeek Harness Desktop AI Agent (Dark)" width="100%">
 </p>
+
+> ⚠️ **Early Release / 早期版本**
+>
+> Narwhal is a personal open-source project. This is the first public release — it works, but there are known gaps (Windows/Linux builds, auto-update, advanced model presets, rich trajectory renderer, etc.). Bug reports, feature requests, and PRs are all welcome. Roadmap is tracked in [GitHub Issues](https://github.com/yumingtao/narwhal/issues).
+>
+> Narwhal 是一个个人开源项目，当前为首个公开发布版本。核心功能已可用，但仍有很多不足（Windows/Linux 打包、自动更新、高级模型预设、完整轨迹渲染等）。欢迎提交 Issue 和 PR，改进会逐步推出。
 
 ## What is Narwhal?
 
