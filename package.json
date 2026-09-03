@@ -77,7 +77,6 @@
       ],
       "category": "public.app-category.developer-tools",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
-      "identity": null,
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "asarUnpack": [
