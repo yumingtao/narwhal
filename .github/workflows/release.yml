@@ -59,7 +59,10 @@ jobs:
         run: |
           APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
           cd "$(dirname "$APP")"
-          zip -9 -r "../../release/Narwhal-${GITHUB_REF_NAME}-mac-arm64.zip" "Narwhal.app"
+          # -y: store symlinks as-is (don't follow) — pnpm node_modules is
+          # all symlinks/hardlinks, following them bloats the ZIP 5x+.
+          # macOS unzip + Finder both correctly restore symlinks.
+          zip -9 -y -r "../../release/Narwhal-${GITHUB_REF_NAME}-mac-arm64.zip" "Narwhal.app"
           cd "$GITHUB_WORKSPACE"
           ls -lh release/*.zip
 
