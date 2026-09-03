@@ -1,3 +1,7 @@
+<p align="center">
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
 <h1 align="center">Narwhal</h1>
 <p align="center">
   <strong>A local-first, privacy-first <a href="https://github.com/deepseek-ai/deepseek-harness">DeepSeek Harness</a> desktop app.</strong>
@@ -17,11 +21,37 @@
   <img src="assets/screenshots/workbench-dark.png" alt="Narwhal — DeepSeek Harness Desktop AI Agent (Dark)" width="100%">
 </p>
 
-> ⚠️ **Early Release / 早期版本**
->
-> Narwhal is a personal open-source project. This is the first public release — it works, but there are known gaps (Windows/Linux builds, auto-update, advanced model presets, rich trajectory renderer, etc.). Bug reports, feature requests, and PRs are all welcome. Roadmap is tracked in [GitHub Issues](https://github.com/yumingtao/narwhal/issues).
->
-> Narwhal 是一个个人开源项目，当前为首个公开发布版本。核心功能已可用，但仍有很多不足（Windows/Linux 打包、自动更新、高级模型预设、完整轨迹渲染等）。欢迎提交 Issue 和 PR，改进会逐步推出。
+> ⚠️ **Early Release** — Narwhal is a personal open-source project. This is the first public release: core features work, but there are known gaps (Windows/Linux builds, auto-update, advanced model presets, rich trajectory renderer, etc.). Bug reports, feature requests, and PRs are all welcome. Roadmap is tracked in [GitHub Issues](https://github.com/yumingtao/narwhal/issues).
+
+---
+
+## Screenshots
+
+### Main Workbench
+
+<p align="center">
+  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal Workbench" width="100%">
+  <sub>Workspace picker, agent workbench, conversation history, and composer controls — all local, all loopback.</sub>
+</p>
+
+### Integrations Marketplace
+
+Narwhal's standout feature: a built-in marketplace for MCP servers, Runtime Extensions (Cordis plugins), and Skills. Search, install, and manage everything from the Settings UI.
+
+<p align="center">
+  <img src="assets/screenshots/mcp-servers-dark.png" alt="MCP Servers — Integrations Marketplace" width="100%">
+  <sub>Search the public MCP registry, install with one click, or add a self-developed MCP server manually (stdio or streamable-http transport).</sub>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/runtime-extensions-dark.png" alt="Runtime Extensions — Integrations Marketplace" width="100%">
+  <sub>Browse and install DSH Cordis plugin bundles — framework-level extensions that add new capabilities to the Agent runtime (sandbox shells, credential management, MCP protocol client, etc.).</sub>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/skills-dark.png" alt="Skills — Integrations Marketplace" width="100%">
+  <sub>Add Markdown skill packs from GitHub raw URLs or git repositories. Installed skills land in <code>~/.config/narwhal/skills/</code> and are loaded into the Agent's system prompt.</sub>
+</p>
 
 ## What is Narwhal?
 
@@ -29,25 +59,25 @@ Narwhal is a desktop application that brings a local-first, privacy-first AI age
 
 Narwhal is designed for anyone who wants the power of DeepSeek Harness without compromising local control, privacy, or workflow autonomy.
 
-## Why Narwhal? / 为什么叫 Narwhal？
+## Why Narwhal?
 
-Narwhal（独角鲸）。这个名字源于三个设计意图：
+Narwhal — the Arctic unicorn whale. Here's the naming intent:
 
-**1. 同源 DeepSeek**
+**1. Lineage with DeepSeek**
 
-Narwhal 是独角鲸，DeepSeek 的 Logo 也是鲸鱼。这个名字表达的是：Narwhal 不是一个独立的新物种，它是 DeepSeek 生态下的一个桌面端延伸 — 基于 DeepSeek Harness runtime，给它一个本地、专属、完全自主的宿主。Logo、配色、整体视觉都跟 DeepSeek 的鲸系列一脉相承。
+Narwhal is a whale, and DeepSeek's logo is also a whale. The name expresses that Narwhal is not a separate species — it's the desktop extension of the DeepSeek ecosystem. It wraps DeepSeek Harness runtime in a local, dedicated, fully autonomous host. Logo, colors, and overall visual language all follow DeepSeek's whale lineage.
 
-**2. 深入（Deep）**
+**2. Deep**
 
-独角鲸生活在北极海域，是最深潜的哺乳动物之一，能下到 1500 米。Narwhal 也希望如此：不是停留在表层的对话机器人，而是能深入到项目上下文、Git 仓库、MCP 工具链、runtime 插件 — 成为 Agent 真正的执行层，而不仅仅是一个聊天窗口。
+Narwhals live in Arctic waters and are one of the deepest-diving mammals, reaching 1,500 meters. Narwhal aims the same way: not a surface-level chatbot, but something that goes deep — into project context, Git repositories, MCP toolchains, runtime plugins — becoming the Agent's actual execution layer, not just a chat window.
 
-**3. 专注（Focus）**
+**3. Focus**
 
-独角鲸的标志性长牙是单一的犬齿穿透上颌生长而成 — 尖锐、集中、不分叉。Narwhal 也是这样的产品：它就是 DeepSeek Harness 的桌面壳，不是通用 IDE，不是万能平台。一个目的，做好一件事。
+The narwhal's signature tusk grows from a single canine tooth piercing through the upper jaw — sharp, concentrated, not branched. Narwhal follows the same philosophy: it is DeepSeek Harness's desktop shell. Not a generic IDE, not a Swiss army knife. One purpose, done well.
 
-**4. 进取（Progress）**
+**4. Progress**
 
-独角鲸不是被动潜水的动物 — 它们在冰层下穿行、探索、迁徙。Narwhal 同样想做一件事：把 DeepSeek Harness 的能力从浏览器里解放出来，推到更广阔的工作场景中，让 AI agent 真正进驻到开发者的日常桌面里。
+Narwhals don't passively dive — they navigate under ice, explore, migrate. Narwhal aims to do one thing: liberate DeepSeek Harness's capabilities from the browser, push them into broader work scenarios, and let AI agents genuinely move onto developers' daily desktops.
 
 ---
 
@@ -116,25 +146,6 @@ Narwhal follows a strict security boundary between the renderer (UI) and the run
 | macOS x64 | 🚧 Planned | Universal build |
 | Windows x64 | 🚧 Planned | On the roadmap |
 | Linux | 🚧 Planned | On the roadmap |
-
-## Screenshots
-
-**Integrations Marketplace — MCP Servers, Runtime Extensions, Skills**
-
-<p align="center">
-  <img src="assets/screenshots/mcp-servers-dark.png" alt="MCP Servers — Integrations Marketplace" width="100%">
-  <sub>Search the public MCP registry, install with one click, or add a self-developed MCP server manually (stdio or streamable-http transport).</sub>
-</p>
-
-<p align="center">
-  <img src="assets/screenshots/runtime-extensions-dark.png" alt="Runtime Extensions — Integrations Marketplace" width="100%">
-  <sub>Browse and install DSH Cordis plugin bundles — framework-level extensions that add new capabilities to the Agent runtime (sandbox shells, credential management, MCP protocol client, etc.).</sub>
-</p>
-
-<p align="center">
-  <img src="assets/screenshots/skills-dark.png" alt="Skills — Integrations Marketplace" width="100%">
-  <sub>Add Markdown skill packs from GitHub raw URLs or git repositories. Installed skills land in <code>~/.config/narwhal/skills/</code> and are loaded into the Agent's system prompt.</sub>
-</p>
 
 ## Quick Start
 
@@ -426,7 +437,3 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed gu
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 When distributing Narwhal, preserve the upstream license and notices for the staged runtime located in `runtime/dsh/`.
-
-## Star History
-
-Star history chart will be added after the repository is published to GitHub.
