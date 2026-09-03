@@ -133,8 +133,20 @@ Narwhal follows a strict security boundary between the renderer (UI) and the run
 
 ## Quick Start
 
-### Prerequisites
+### Option A — Download the app (end users)
 
+Narwhal ships as a self-contained desktop application. The DSH runtime is bundled inside — **no Node.js, pnpm, or any other dependency is required on your machine.**
+
+1. Download the latest `.dmg` or `.zip` from [GitHub Releases](https://github.com/yumingtao/narwhal/releases) (macOS arm64)
+2. Double-click the `.dmg`, drag **Narwhal.app** into `/Applications`
+3. Open Narwhal. On first launch macOS may prompt "Narwhal can't be opened" — right-click → **Open** → confirm again
+4. Open **Settings** (gear icon, bottom-left), add your API keys, and start chatting
+
+That's it — everything runs on loopback. No accounts, no cloud setup, no telemetry.
+
+### Option B — Build from source (developers)
+
+Prerequisites:
 - Node.js 22+
 - pnpm
 
@@ -148,6 +160,15 @@ pnpm stage:runtime
 # Run in development mode
 pnpm dev
 ```
+
+Package a production `.app` (macOS):
+
+```sh
+# Build + stage runtime + produce DMG + ZIP in release/
+pnpm package:mac
+```
+
+The packaged `.app` bundles the DSH runtime into `Contents/Resources/runtime/dsh/` — end users who install from the resulting DMG/ZIP do not need Node.js or any other toolchain.
 
 Runtime discovery priority (dev mode):
 1. `config.json` → `runtime.root` override

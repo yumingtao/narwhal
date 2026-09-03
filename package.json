@@ -28,7 +28,6 @@
     "@vitejs/plugin-react": "^6.0.5",
     "electron": "43.4.0",
     "electron-builder": "26.15.3",
-    "puppeteer-core": "^25.9.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "typescript": "^6.0.3",
