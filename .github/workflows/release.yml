@@ -44,22 +44,31 @@ jobs:
           echo "Using DSH runtime: $DSH_RUNTIME_SOURCE"
           pnpm run stage:runtime
 
-      - name: Build .app + ad-hoc codesign
+      - name: Build .app (unsigned)
         run: |
-          ulimit -n 524288
-          echo "ulimit: $(ulimit -n)"
-          # dir-only build (no DMG/ZIP packer — avoids EMFILE)
+          # identity=null → electron-builder skips signing entirely
+          # (CI codesign --deep hits EMFILE on DSH runtime's 28k files)
           pnpm exec electron-builder --mac dir --arm64 --publish never
+
+      - name: Manual ad-hoc codesign
+        run: |
+          ulimit -n 1048576
+          APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
+          echo "App: $APP"
+
+          # Deep codesign — shell codesign vs electron-builder's internal uses
+          # different fd patterns and often works on macOS runners
+          codesign --force --deep --sign - "$APP"
+          echo "✅ codesign done"
+
+          codesign -dv "$APP" 2>&1 | grep -E "(Identifier|Signature|Team)"
+          codesign --verify --deep --strict "$APP" 2>&1 && echo "✅ verify OK"
 
       - name: Create ZIP (manual)
         run: |
           APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
-          echo "App: $APP"
-          codesign -dv "$APP" 2>&1 | grep -E "(Identifier|Signature)"
-
           cd "$(dirname "$APP")"
           zip -1 -r "../../release/Narwhal-${GITHUB_REF_NAME}-mac-arm64.zip" "Narwhal.app"
-
           cd "$GITHUB_WORKSPACE"
           ls -lh release/*.zip
 

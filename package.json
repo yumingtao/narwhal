@@ -80,7 +80,7 @@
       "asarUnpack": [
         "**/*.node"
       ],
-      "identity": "-"
+      "identity": null
     },
     "afterSign": "scripts/notarize.cjs"
   },
