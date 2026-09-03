@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href=".">English</a> · <strong>简体中文</strong>
 </p>
 
 <h1 align="center">Narwhal</h1>
