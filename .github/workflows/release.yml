@@ -43,22 +43,17 @@ jobs:
           export DSH_RUNTIME_SOURCE=$(node -p "require('./package.json').dshRuntime")
           echo "Using DSH runtime: $DSH_RUNTIME_SOURCE"
           pnpm run stage:runtime
-          # Aggressive prune to avoid EMFILE on macOS runner:
-          # DSH runtime pulls ~8k files from node_modules, most are dev-only
+          # Aggressive prune to avoid EMFILE on macOS runner.
+          # DSH runtime has ~28k files, most dev-only. pnpm uses symlinks
+          # so we must prune BOTH node_modules AND .pnpm store.
           echo "Pruning runtime node_modules..."
           cd runtime/dsh
-          find node_modules -name '*.map' -delete 2>/dev/null
-          find node_modules -name 'src' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name '__tests__' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name 'test' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name 'tests' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name 'example' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name 'examples' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name 'demo' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name 'docs' -type d -exec rm -rf {} + 2>/dev/null
-          find node_modules -name '*.d.ts' -delete 2>/dev/null  # TS type defs
-          find node_modules -name '*.md' -delete 2>/dev/null     # README per package
-          find node_modules -name 'LICENSE*' -delete 2>/dev/null
+          for DIR in node_modules node_modules/.pnpm; do
+            [ -d "$DIR" ] || continue
+            find "$DIR" -name '*.map' -delete 2>/dev/null
+            find "$DIR" -type d \( -name src -o -name __tests__ -o -name test -o -name tests -o -name example -o -name examples -o -name demo -o -name docs \) -exec rm -rf {} + 2>/dev/null
+            find "$DIR" \( -name '*.d.ts' -o -name '*.md' -o -name 'LICENSE*' \) -delete 2>/dev/null
+          done
           cd ../..
           echo "Pruning done. File count:"
           find runtime/dsh/node_modules -type f 2>/dev/null | wc -l
