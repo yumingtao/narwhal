@@ -43,11 +43,18 @@ jobs:
           export DSH_RUNTIME_SOURCE=$(node -p "require('./package.json').dshRuntime")
           echo "Using DSH runtime: $DSH_RUNTIME_SOURCE"
           pnpm run stage:runtime
+          # Prune source maps — saves ~3k files from node_modules, avoids EMFILE
+          echo "Pruning .map files from runtime..."
+          find runtime/dsh -name '*.map' -delete 2>/dev/null || true
+          echo "Done."
 
       - name: Package (DMG + ZIP)
         run: |
-          ulimit -n 65536
+          # macOS runner hard limit — raise it
+          launchctl setlimit maxfiles 524288 524288 2>/dev/null || true
+          ulimit -n 524288 2>/dev/null || ulimit -n 65536
           echo "ulimit: $(ulimit -n)"
+          
           pnpm exec electron-builder \
             --mac dmg zip \
             --arm64 \
