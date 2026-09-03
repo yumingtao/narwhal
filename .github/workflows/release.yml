@@ -59,7 +59,7 @@ jobs:
         run: |
           APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
           cd "$(dirname "$APP")"
-          zip -1 -r "../../release/Narwhal-${GITHUB_REF_NAME}-mac-arm64.zip" "Narwhal.app"
+          zip -9 -r "../../release/Narwhal-${GITHUB_REF_NAME}-mac-arm64.zip" "Narwhal.app"
           cd "$GITHUB_WORKSPACE"
           ls -lh release/*.zip
 
