@@ -81,7 +81,8 @@
       "gatekeeperAssess": false,
       "asarUnpack": [
         "**/*.node"
-      ]
+      ],
+      "identity": "-"
     },
     "afterSign": "scripts/notarize.cjs"
   },
