@@ -43,18 +43,30 @@ jobs:
           export DSH_RUNTIME_SOURCE=$(node -p "require('./package.json').dshRuntime")
           echo "Using DSH runtime: $DSH_RUNTIME_SOURCE"
           pnpm run stage:runtime
-          # Prune source maps — saves ~3k files from node_modules, avoids EMFILE
-          echo "Pruning .map files from runtime..."
-          find runtime/dsh -name '*.map' -delete 2>/dev/null || true
-          echo "Done."
+          # Aggressive prune to avoid EMFILE on macOS runner:
+          # DSH runtime pulls ~8k files from node_modules, most are dev-only
+          echo "Pruning runtime node_modules..."
+          cd runtime/dsh
+          find node_modules -name '*.map' -delete 2>/dev/null
+          find node_modules -name 'src' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name '__tests__' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name 'test' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name 'tests' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name 'example' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name 'examples' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name 'demo' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name 'docs' -type d -exec rm -rf {} + 2>/dev/null
+          find node_modules -name '*.d.ts' -delete 2>/dev/null  # TS type defs
+          find node_modules -name '*.md' -delete 2>/dev/null     # README per package
+          find node_modules -name 'LICENSE*' -delete 2>/dev/null
+          cd ../..
+          echo "Pruning done. File count:"
+          find runtime/dsh/node_modules -type f 2>/dev/null | wc -l
 
       - name: Package (DMG + ZIP)
         run: |
-          # macOS runner hard limit — raise it
-          launchctl setlimit maxfiles 524288 524288 2>/dev/null || true
-          ulimit -n 524288 2>/dev/null || ulimit -n 65536
+          ulimit -n 524288
           echo "ulimit: $(ulimit -n)"
-          
           pnpm exec electron-builder \
             --mac dmg zip \
             --arm64 \
