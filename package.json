@@ -21,6 +21,7 @@
     "package:mac": "pnpm run build && pnpm run stage:runtime && electron-builder --mac dmg zip --publish never"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@types/node": "^22.20.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
@@ -75,8 +76,15 @@
         "zip"
       ],
       "category": "public.app-category.developer-tools",
-      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
-    }
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "asarUnpack": [
+        "**/*.node"
+      ]
+    },
+    "afterSign": "scripts/notarize.cjs"
   },
   "dependencies": {
     "highlight.js": "^11.12.0",

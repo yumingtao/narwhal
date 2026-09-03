@@ -158,6 +158,21 @@ Narwhal 是独立的桌面应用，DSH runtime 已打包在内 — **你的机�
 3. 打开 Narwhal。首次启动时 macOS 可能提示 "Narwhal 无法打开" — 右键 → **打开** → 再次确认
 4. 打开 **设置**（左下角齿轮图标），添加 API Key，开始使用
 
+> **macOS 未签名构建说明**
+> 当前 GitHub Releases 尚未 notarize。浏览器下载后，macOS 会给 app 打 quarantine
+> 标记，弹出：*"Narwhal 已损坏，无法打开"*
+>
+> **快速修复 — Finder 右键：**
+> 右键 Narwhal.app → **打开** → 在安全对话框中再次点击 **打开**。macOS 会记住这次选择。
+>
+> **终端一行修复：**
+> ```bash
+> xattr -d com.apple.quarantine /Applications/Narwhal.app
+> ```
+>
+> 项目获得 Apple Developer ID 后会开启 notarization。
+> 详见 [`docs/macos-release-checklist.md`](docs/macos-release-checklist.md)。
+
 就这么简单 — 全部 loopback 运行，无账号、无云端配置、无遥测。
 
 ### 方式二 — 从源码构建（开发者）

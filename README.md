@@ -158,6 +158,23 @@ Narwhal ships as a self-contained desktop application. The DSH runtime is bundle
 3. Open Narwhal. On first launch macOS may prompt "Narwhal can't be opened" — right-click → **Open** → confirm again
 4. Open **Settings** (gear icon, bottom-left), add your API keys, and start chatting
 
+> **macOS Gatekeeper note for unsigned builds**
+> The current GitHub Releases are notarized yet. After downloading from a
+> browser, macOS marks the app with a quarantine attribute and shows:
+> *"Narwhal is damaged and can't be opened."*
+>
+> **Quick fix — right-click in Finder:**
+> Right-click Narwhal.app → **Open** → confirm with **Open** again in the
+> security dialog. macOS will remember this for this app.
+>
+> **Terminal fix (one line):**
+> ```bash
+> xattr -d com.apple.quarantine /Applications/Narwhal.app
+> ```
+>
+> We plan to enable Apple notarization once the project obtains a Developer ID.
+> See [`docs/macos-release-checklist.md`](docs/macos-release-checklist.md) for details.
+
 That's it — everything runs on loopback. No accounts, no cloud setup, no telemetry.
 
 ### Option B — Build from source (developers)
