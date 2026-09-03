@@ -183,10 +183,30 @@ button { cursor: pointer; }
 .sidebar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sidebar-toggle[aria-pressed="true"] { border-color: var(--accent-strong); background: var(--bg-accent-active); color: var(--accent-hover); }
 .sidebar.is-collapsed { align-items: stretch; gap: 0; overflow: hidden; padding: 18px 8px; }
-.sidebar.is-collapsed > :not(.sidebar-identity) { display: none; }
 .sidebar.is-collapsed .sidebar-identity { justify-content: center; padding: 2px 0 14px; }
 .sidebar.is-collapsed .sidebar-identity > img, .sidebar.is-collapsed .sidebar-identity > div { display: none; }
 .sidebar.is-collapsed .sidebar-toggle { margin-left: 0; }
+/* Hide expanded-state SideBar content, but NOT collapsed avatars or side-foot */
+.sidebar.is-collapsed .side-section,
+.sidebar.is-collapsed .workspace-list,
+.sidebar.is-collapsed .sessions,
+.sidebar.is-collapsed .section-heading,
+.sidebar.is-collapsed .section-title,
+.sidebar.is-collapsed .new-task { display: none; }
+/* Settings button → icon-only in collapsed state */
+.sidebar.is-collapsed .side-foot { justify-content: center; }
+.sidebar.is-collapsed .side-foot button { justify-content: center; width: 38px; height: 38px; padding: 0; }
+.sidebar.is-collapsed .side-foot button span,
+.sidebar.is-collapsed .side-foot button small,
+.sidebar.is-collapsed .side-foot button label { display: none; }
+/* Collapsed workspace avatars */
+.collapsed-workspaces { display: grid; gap: 10px; padding: 4px 0; justify-items: center; align-content: start; overflow-y: auto; flex: 1; min-height: 0; }
+.collapsed-workspaces::-webkit-scrollbar { width: 0; }
+.collapsed-ws-avatar { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 0; border-radius: 10px; font-size: 14px; font-weight: 700; color: rgba(0,0,0,.75); cursor: pointer; transition: transform .15s, box-shadow .15s; }
+.collapsed-ws-avatar:hover { transform: scale(1.08); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+.collapsed-ws-avatar.active { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 3px var(--accent-soft); }
+.collapsed-ws-avatar.collapsed-ws-add { background: transparent; border: 1px dashed var(--border); color: var(--fg-tertiary); font-weight: 500; }
+.collapsed-ws-avatar.collapsed-ws-add:hover { border-color: var(--accent); color: var(--accent); }
 .new-task { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 11px 13px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-hover); color: var(--fg-primary); font-size: 13px; font-weight: 650; transition: background .18s, border-color .18s; }
 .new-task:hover { background: var(--bg-hover); border-color: var(--accent); }.new-task:disabled { opacity: .42; cursor: not-allowed; }
 .primary { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 13px; border: 0; border-radius: 8px; background: var(--accent); color: var(--fg-on-accent); font-size: 13px; font-weight: 700; }.primary:hover { background: var(--accent-hover); }.primary:disabled { opacity: .42; cursor: not-allowed; }

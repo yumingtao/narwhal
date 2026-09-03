@@ -259,8 +259,8 @@ function App() {
     <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}`} style={layoutStyle}>
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
         <div className="sidebar-identity" aria-label="Narwhal"><img src="./assets/narwhal-icon.png" alt=""/><div><span className="sidebar-product-name">Narwhal</span><span className="sidebar-product-subtitle">Based on DeepSeek Harness</span></div><button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}><Icon name="panel" size={17}/></button></div>
-        <SideBar workbench={workbench} sessions={conversation.sessions} selectedSessionId={conversation.selectedSessionId} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={(workspaceId) => void createSession(workspaceId)} selectSession={(workspaceId, sessionId) => void selectSessionForWorkspace(workspaceId, sessionId)} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
-        <div className="side-foot"><button onClick={() => setSettingsOpen(true)}><Icon name="settings"/>Settings</button></div>
+        <SideBar collapsed={sidebarCollapsed} workbench={workbench} sessions={conversation.sessions} selectedSessionId={conversation.selectedSessionId} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={(workspaceId) => void createSession(workspaceId)} selectSession={(workspaceId, sessionId) => void selectSessionForWorkspace(workspaceId, sessionId)} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
+        <div className="side-foot"><button onClick={() => setSettingsOpen(true)}><Icon name="settings"/><span>Settings</span></button></div>
       </aside>
       {!sidebarCollapsed && <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>}
       <section className="agent-area">
@@ -292,7 +292,7 @@ const CONVERSATIONS_PER_PAGE = 5
 type GroupBy = 'workspace' | 'flat'
 type OrderBy = 'manual' | 'lastUpdated'
 
-function SideBar({ workbench, sessions, selectedSessionId, choose, selectWorkspace, createSession, selectSession, renameWorkspace, deleteWorkspace }: { workbench: WorkbenchSnapshot; sessions: AgentConversation['sessions']; selectedSessionId?: string; choose: () => void; selectWorkspace: (id: string) => void; createSession: (workspaceId: string) => void; selectSession: (workspaceId: string, sessionId: string) => void; renameWorkspace: (id: string, name: string) => void; deleteWorkspace: (id: string) => void }) {
+function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, selectWorkspace, createSession, selectSession, renameWorkspace, deleteWorkspace }: { collapsed: boolean; workbench: WorkbenchSnapshot; sessions: AgentConversation['sessions']; selectedSessionId?: string; choose: () => void; selectWorkspace: (id: string) => void; createSession: (workspaceId: string) => void; selectSession: (workspaceId: string, sessionId: string) => void; renameWorkspace: (id: string, name: string) => void; deleteWorkspace: (id: string) => void }) {
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Record<string, boolean>>({})
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({})
   const [filterMenuOpen, setFilterMenuOpen] = useState(false)
@@ -301,6 +301,37 @@ function SideBar({ workbench, sessions, selectedSessionId, choose, selectWorkspa
   const [renameValue, setRenameValue] = useState('')
   const [groupBy, setGroupBy] = useState<GroupBy>('workspace')
   const [orderBy, setOrderBy] = useState<OrderBy>('lastUpdated')
+
+  // --- Collapsed (icon-only) view ---
+  if (collapsed) {
+    const avatarColors = ['#e5b27e', '#a7c4a0', '#c9a7c4', '#9ab8d4', '#d4a89a', '#b5c9a7', '#c4a77e', '#a7b8c9']
+    return (
+      <>
+        <div className="collapsed-workspaces">
+          {workbench.workspaces.map((item, i) => {
+            const rawName = item.name || '?'
+            const letterMatch = rawName.match(/[A-Za-z\u4e00-\u9fff]/)
+            const initial = letterMatch ? letterMatch[0].toUpperCase() : rawName.charAt(0).toUpperCase()
+            const active = item.id === workbench.selectedWorkspaceId
+            const color = avatarColors[i % avatarColors.length]
+            return (
+              <button
+                key={item.id}
+                className={`collapsed-ws-avatar${active ? ' active' : ''}`}
+                title={`${item.name}${item.displayPath ? `\n${item.displayPath}` : ''}`}
+                aria-label={`Open workspace ${item.name}`}
+                style={{ background: color }}
+                onClick={() => selectWorkspace(item.id)}
+              >{initial}</button>
+            )
+          })}
+          <button className="collapsed-ws-avatar collapsed-ws-add" title="New workspace" aria-label="New workspace" onClick={choose}>
+            <Icon name="folder-plus" size={14}/>
+          </button>
+        </div>
+      </>
+    )
+  }
 
   const toggleWorkspace = (id: string) => {
     setExpandedWorkspaces((prev) => ({ ...prev, [id]: !(prev[id] ?? id === workbench.selectedWorkspaceId) }))
