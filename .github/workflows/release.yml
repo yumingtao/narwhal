@@ -43,29 +43,50 @@ jobs:
           export DSH_RUNTIME_SOURCE=$(node -p "require('./package.json').dshRuntime")
           echo "Using DSH runtime: $DSH_RUNTIME_SOURCE"
           pnpm run stage:runtime
-          # Aggressive prune to avoid EMFILE on macOS runner.
-          # DSH runtime has ~28k files, most dev-only. pnpm uses symlinks
-          # so we must prune BOTH node_modules AND .pnpm store.
-          echo "Pruning runtime node_modules..."
-          cd runtime/dsh
-          for DIR in node_modules node_modules/.pnpm; do
-            [ -d "$DIR" ] || continue
-            find "$DIR" -name '*.map' -delete 2>/dev/null
-            find "$DIR" -type d \( -name src -o -name __tests__ -o -name test -o -name tests -o -name example -o -name examples -o -name demo -o -name docs \) -exec rm -rf {} + 2>/dev/null
-            find "$DIR" \( -name '*.d.ts' -o -name '*.md' -o -name 'LICENSE*' \) -delete 2>/dev/null
-          done
-          cd ../..
-          echo "Pruning done. File count:"
-          find runtime/dsh/node_modules -type f 2>/dev/null | wc -l
 
-      - name: Package (DMG + ZIP)
+      - name: Package + codesign (dir only, manual DMG/ZIP)
         run: |
           ulimit -n 524288
           echo "ulimit: $(ulimit -n)"
+
+          # Step 1: electron-builder — dir only (no DMG/ZIP pack needed)
           pnpm exec electron-builder \
-            --mac dmg zip \
+            --mac dir \
             --arm64 \
             --publish never
+
+          APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
+          echo "Built: $APP"
+
+          # Step 2: ad-hoc codesign (macOS 15 compatibility)
+          echo "Ad-hoc codesigning..."
+          codesign --force --deep --sign - "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E "(Identifier|Signature)"
+
+          # Step 3: ZIP (compression=0 for speed, GitHub will recompress anyway)
+          echo "Creating ZIP..."
+          cd "$(dirname "$APP")"
+          zip -0 -r "../../release/Narwhal-${{ github.ref_name }}-mac-arm64.zip" "Narwhal.app"
+
+          # Step 4: DMG via create-dmg (lightweight, avoids EMFILE)
+          echo "Creating DMG..."
+          brew install create-dmg 2>/dev/null || true
+          create-dmg \
+            --volname "Narwhal Installer" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "Narwhal.app" 100 190 \
+            --hide-extension "Narwhal.app" \
+            --app-drop-link 420 185 \
+            "../../release/Narwhal-${{ github.ref_name }}-mac-arm64.dmg" \
+            "Narwhal.app" \
+            || echo "⚠️  DMG creation failed, will ship ZIP only"
+
+          cd "$GITHUB_WORKSPACE"
+          echo ""
+          echo "=== Final artifacts ==="
+          ls -lh release/*.zip release/*.dmg 2>/dev/null || ls -lh release/*.zip
 
       - name: Verify artifacts
         run: |
