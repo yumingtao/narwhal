@@ -4,11 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag version (e.g. v0.1.0)'
-        required: false
 
 permissions:
   contents: write
@@ -17,7 +12,7 @@ jobs:
   build-macos-arm64:
     name: Build macOS (arm64)
     runs-on: macos-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +30,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
+      - name: Build renderer + main
         run: pnpm build
 
       - name: Stage DSH runtime
@@ -44,27 +39,23 @@ jobs:
           echo "Using DSH runtime: $DSH_RUNTIME_SOURCE"
           pnpm run stage:runtime
 
-      - name: Build .app (unsigned)
+      - name: Build .app (dir-only, skip signing)
         run: |
-          # identity=null → electron-builder skips signing entirely
-          # (CI codesign --deep hits EMFILE on DSH runtime's 28k files)
+          # identity=null → electron-builder skips signing.
+          # Its internal codesign hits EMFILE on CI with DSH runtime's 28k files.
+          # We sign separately with shell codesign below.
           pnpm exec electron-builder --mac dir --arm64 --publish never
 
-      - name: Manual ad-hoc codesign
+      - name: Ad-hoc codesign (shell)
         run: |
           ulimit -n 1048576
           APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
           echo "App: $APP"
-
-          # Deep codesign — shell codesign vs electron-builder's internal uses
-          # different fd patterns and often works on macOS runners
           codesign --force --deep --sign - "$APP"
-          echo "✅ codesign done"
+          codesign -dv "$APP" 2>&1 | grep -E "(Identifier|Signature)"
+          codesign --verify --deep --strict "$APP" && echo "✅ verify OK"
 
-          codesign -dv "$APP" 2>&1 | grep -E "(Identifier|Signature|Team)"
-          codesign --verify --deep --strict "$APP" 2>&1 && echo "✅ verify OK"
-
-      - name: Create ZIP (manual)
+      - name: Create ZIP
         run: |
           APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
           cd "$(dirname "$APP")"
@@ -72,11 +63,32 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           ls -lh release/*.zip
 
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
+          cd "$(dirname "$APP")"
+          create-dmg \
+            --volname "Narwhal Installer" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "Narwhal.app" 100 190 \
+            --hide-extension "Narwhal.app" \
+            --app-drop-link 420 185 \
+            --no-internet-enable \
+            "${GITHUB_WORKSPACE}/release/Narwhal-${GITHUB_REF_NAME}-mac-arm64.dmg" \
+            "Narwhal.app"
+          cd "$GITHUB_WORKSPACE"
+          ls -lh release/*.dmg
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: narwhal-mac-arm64
-          path: release/*.zip
+          path: |
+            release/*.zip
+            release/*.dmg
           if-no-files-found: error
 
   release:
@@ -92,7 +104,7 @@ jobs:
           name: narwhal-mac-arm64
           path: artifacts
 
-      - name: Create GitHub Release
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
