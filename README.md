@@ -29,16 +29,25 @@ Narwhal is a desktop application that brings a local-first, privacy-first AI age
 
 Narwhal is designed for anyone who wants the power of DeepSeek Harness without compromising local control, privacy, or workflow autonomy.
 
-## Why Narwhal?
+## Why Narwhal? / 为什么叫 Narwhal？
 
-Narwhal — the Arctic unicorn whale. Here's the metaphor:
+Narwhal（独角鲸）。这个名字源于三个设计意图：
 
-- **Local-first** → like the narwhal living at the remote polar ice edge, everything stays where you are, never dependent on distant clouds or remote teams. Your conversations, your workspaces, your MCP servers — they all run on your machine, on loopback only.
-- **Privacy by design** → the narwhal's tusk is a sensory organ (it can detect salinity, temperature, and barometric pressure). Think of it as Narwhal's approach to trust: transparent, observable from the surface, nothing hidden. No telemetry, no account required, no data leaves your machine unless you explicitly trigger an MCP or model API call.
-- **One pointed purpose** → the narwhal's signature tusk is the result of a single elongated canine tooth grown through the upper lip. Focused, singular, not branched. Narwhal follows the same philosophy: a dedicated desktop AI agent shell for DeepSeek Harness — not a chat app, not a generic IDE, just the agent surface you own.
-- **Subtle strength** → narwhals are quiet animals; they don't breach like humpbacks. Narwhal doesn't flash a bunch of marketing. It boots into a workbench. It hosts the Harness runtime. It stays out of the way.
+**1. 同源 DeepSeek**
 
-Or, put more simply: a local-first, privacy-first AI agent that doesn't try to be everything — just the one thing you need.
+Narwhal 是独角鲸，DeepSeek 的 Logo 也是鲸鱼。这个名字表达的是：Narwhal 不是一个独立的新物种，它是 DeepSeek 生态下的一个桌面端延伸 — 基于 DeepSeek Harness runtime，给它一个本地、专属、完全自主的宿主。Logo、配色、整体视觉都跟 DeepSeek 的鲸系列一脉相承。
+
+**2. 深入（Deep）**
+
+独角鲸生活在北极海域，是最深潜的哺乳动物之一，能下到 1500 米。Narwhal 也希望如此：不是停留在表层的对话机器人，而是能深入到项目上下文、Git 仓库、MCP 工具链、runtime 插件 — 成为 Agent 真正的执行层，而不仅仅是一个聊天窗口。
+
+**3. 专注（Focus）**
+
+独角鲸的标志性长牙是单一的犬齿穿透上颌生长而成 — 尖锐、集中、不分叉。Narwhal 也是这样的产品：它就是 DeepSeek Harness 的桌面壳，不是通用 IDE，不是万能平台。一个目的，做好一件事。
+
+**4. 进取（Progress）**
+
+独角鲸不是被动潜水的动物 — 它们在冰层下穿行、探索、迁徙。Narwhal 同样想做一件事：把 DeepSeek Harness 的能力从浏览器里解放出来，推到更广阔的工作场景中，让 AI agent 真正进驻到开发者的日常桌面里。
 
 ---
 
