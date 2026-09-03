@@ -17,7 +17,7 @@ jobs:
   build-macos-arm64:
     name: Build macOS (arm64)
     runs-on: macos-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -38,79 +38,36 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Stage DSH runtime (npm mode)
+      - name: Stage DSH runtime
         run: |
           export DSH_RUNTIME_SOURCE=$(node -p "require('./package.json').dshRuntime")
           echo "Using DSH runtime: $DSH_RUNTIME_SOURCE"
           pnpm run stage:runtime
 
-      - name: Package + codesign (dir only, manual DMG/ZIP)
+      - name: Build .app + ad-hoc codesign
         run: |
           ulimit -n 524288
           echo "ulimit: $(ulimit -n)"
+          # dir-only build (no DMG/ZIP packer — avoids EMFILE)
+          pnpm exec electron-builder --mac dir --arm64 --publish never
 
-          # Step 1: electron-builder — dir only (no DMG/ZIP pack needed)
-          pnpm exec electron-builder \
-            --mac dir \
-            --arm64 \
-            --publish never
-
+      - name: Create ZIP (manual)
+        run: |
           APP=$(find release -name 'Narwhal.app' -maxdepth 3 | head -1)
-          echo "Built: $APP"
-
-          # Step 2: ad-hoc codesign (macOS 15 compatibility)
-          echo "Ad-hoc codesigning..."
-          codesign --force --deep --sign - "$APP"
+          echo "App: $APP"
           codesign -dv "$APP" 2>&1 | grep -E "(Identifier|Signature)"
 
-          # Step 3: ZIP (compression=0 for speed, GitHub will recompress anyway)
-          echo "Creating ZIP..."
           cd "$(dirname "$APP")"
-          zip -0 -r "../../release/Narwhal-${{ github.ref_name }}-mac-arm64.zip" "Narwhal.app"
-
-          # Step 4: DMG via create-dmg (lightweight, avoids EMFILE)
-          echo "Creating DMG..."
-          brew install create-dmg 2>/dev/null || true
-          create-dmg \
-            --volname "Narwhal Installer" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --icon "Narwhal.app" 100 190 \
-            --hide-extension "Narwhal.app" \
-            --app-drop-link 420 185 \
-            "../../release/Narwhal-${{ github.ref_name }}-mac-arm64.dmg" \
-            "Narwhal.app" \
-            || echo "⚠️  DMG creation failed, will ship ZIP only"
+          zip -1 -r "../../release/Narwhal-${GITHUB_REF_NAME}-mac-arm64.zip" "Narwhal.app"
 
           cd "$GITHUB_WORKSPACE"
-          echo ""
-          echo "=== Final artifacts ==="
-          ls -lh release/*.zip release/*.dmg 2>/dev/null || ls -lh release/*.zip
-
-      - name: Verify artifacts
-        run: |
-          echo "=== Artifacts ==="
-          ls -lh release/
-          DMG=$(find release -name '*.dmg' | head -1)
-          ZIP=$(find release -name '*.zip' | head -1)
-          if [ -z "$DMG" ]; then echo "ERROR: DMG not found"; exit 1; fi
-          if [ -z "$ZIP" ]; then echo "ERROR: ZIP not found"; exit 1; fi
-          DMG_SIZE=$(stat -f%z "$DMG" 2>/dev/null || stat -c%s "$DMG" 2>/dev/null || echo 0)
-          ZIP_SIZE=$(stat -f%z "$ZIP" 2>/dev/null || stat -c%s "$ZIP" 2>/dev/null || echo 0)
-          if [ "$DMG_SIZE" -lt 10000000 ]; then echo "ERROR: DMG too small ($DMG_SIZE bytes, expected >10MB)"; exit 1; fi
-          if [ "$ZIP_SIZE" -lt 10000000 ]; then echo "ERROR: ZIP too small ($ZIP_SIZE bytes, expected >10MB)"; exit 1; fi
-          echo "✅ DMG: $DMG ($DMG_SIZE bytes)"
-          echo "✅ ZIP: $ZIP ($ZIP_SIZE bytes)"
+          ls -lh release/*.zip
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: narwhal-mac-arm64
-          path: |
-            release/*.dmg
-            release/*.zip
-            release/*.blockmap
+          path: release/*.zip
           if-no-files-found: error
 
   release:
@@ -125,9 +82,6 @@ jobs:
         with:
           name: narwhal-mac-arm64
           path: artifacts
-
-      - name: Display structure
-        run: ls -lh artifacts/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

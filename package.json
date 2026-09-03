@@ -72,11 +72,9 @@
     ],
     "mac": {
       "target": [
-        "dmg",
-        "zip"
+        "dir"
       ],
       "category": "public.app-category.developer-tools",
-      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "asarUnpack": [
