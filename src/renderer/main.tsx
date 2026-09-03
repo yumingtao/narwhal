@@ -304,23 +304,20 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
 
   // --- Collapsed (icon-only) view ---
   if (collapsed) {
-    const avatarColors = ['#e5b27e', '#a7c4a0', '#c9a7c4', '#9ab8d4', '#d4a89a', '#b5c9a7', '#c4a77e', '#a7b8c9']
     return (
       <>
         <div className="collapsed-workspaces">
-          {workbench.workspaces.map((item, i) => {
+          {workbench.workspaces.map((item) => {
             const rawName = item.name || '?'
             const letterMatch = rawName.match(/[A-Za-z\u4e00-\u9fff]/)
             const initial = letterMatch ? letterMatch[0].toUpperCase() : rawName.charAt(0).toUpperCase()
             const active = item.id === workbench.selectedWorkspaceId
-            const color = avatarColors[i % avatarColors.length]
             return (
               <button
                 key={item.id}
                 className={`collapsed-ws-avatar${active ? ' active' : ''}`}
                 title={`${item.name}${item.displayPath ? `\n${item.displayPath}` : ''}`}
                 aria-label={`Open workspace ${item.name}`}
-                style={{ background: color }}
                 onClick={() => selectWorkspace(item.id)}
               >{initial}</button>
             )

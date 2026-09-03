@@ -195,16 +195,16 @@ button { cursor: pointer; }
 .sidebar.is-collapsed .new-task { display: none; }
 /* Settings button → icon-only in collapsed state */
 .sidebar.is-collapsed .side-foot { justify-content: center; }
-.sidebar.is-collapsed .side-foot button { justify-content: center; width: 38px; height: 38px; padding: 0; }
+.sidebar.is-collapsed .side-foot button { justify-content: center; width: 30px; height: 30px; padding: 0; border-radius: 7px; }
 .sidebar.is-collapsed .side-foot button span,
 .sidebar.is-collapsed .side-foot button small,
 .sidebar.is-collapsed .side-foot button label { display: none; }
 /* Collapsed workspace avatars */
-.collapsed-workspaces { display: grid; gap: 10px; padding: 4px 0; justify-items: center; align-content: start; overflow-y: auto; flex: 1; min-height: 0; }
+.collapsed-workspaces { display: grid; gap: 8px; padding: 4px 0; justify-items: center; align-content: start; overflow-y: auto; flex: 1; min-height: 0; }
 .collapsed-workspaces::-webkit-scrollbar { width: 0; }
-.collapsed-ws-avatar { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 0; border-radius: 10px; font-size: 14px; font-weight: 700; color: rgba(0,0,0,.75); cursor: pointer; transition: transform .15s, box-shadow .15s; }
-.collapsed-ws-avatar:hover { transform: scale(1.08); box-shadow: 0 2px 8px rgba(0,0,0,.3); }
-.collapsed-ws-avatar.active { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 3px var(--accent-soft); }
+.collapsed-ws-avatar { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid transparent; border-radius: 7px; background: var(--bg-hover); color: var(--fg-tertiary); font-size: 12px; font-weight: 600; cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
+.collapsed-ws-avatar:hover { background: var(--bg-muted); border-color: var(--border-strong); color: var(--fg-secondary); }
+.collapsed-ws-avatar.active { background: var(--bg-active); border-color: var(--border-focus); color: var(--fg-primary); }
 .collapsed-ws-avatar.collapsed-ws-add { background: transparent; border: 1px dashed var(--border); color: var(--fg-tertiary); font-weight: 500; }
 .collapsed-ws-avatar.collapsed-ws-add:hover { border-color: var(--accent); color: var(--accent); }
 .new-task { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 11px 13px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-hover); color: var(--fg-primary); font-size: 13px; font-weight: 650; transition: background .18s, border-color .18s; }
