@@ -29,6 +29,19 @@ Narwhal is a desktop application that brings a local-first, privacy-first AI age
 
 Narwhal is designed for anyone who wants the power of DeepSeek Harness without compromising local control, privacy, or workflow autonomy.
 
+## Why Narwhal?
+
+Narwhal — the Arctic unicorn whale. Here's the metaphor:
+
+- **Local-first** → like the narwhal living at the remote polar ice edge, everything stays where you are, never dependent on distant clouds or remote teams. Your conversations, your workspaces, your MCP servers — they all run on your machine, on loopback only.
+- **Privacy by design** → the narwhal's tusk is a sensory organ (it can detect salinity, temperature, and barometric pressure). Think of it as Narwhal's approach to trust: transparent, observable from the surface, nothing hidden. No telemetry, no account required, no data leaves your machine unless you explicitly trigger an MCP or model API call.
+- **One pointed purpose** → the narwhal's signature tusk is the result of a single elongated canine tooth grown through the upper lip. Focused, singular, not branched. Narwhal follows the same philosophy: a dedicated desktop AI agent shell for DeepSeek Harness — not a chat app, not a generic IDE, just the agent surface you own.
+- **Subtle strength** → narwhals are quiet animals; they don't breach like humpbacks. Narwhal doesn't flash a bunch of marketing. It boots into a workbench. It hosts the Harness runtime. It stays out of the way.
+
+Or, put more simply: a local-first, privacy-first AI agent that doesn't try to be everything — just the one thing you need.
+
+---
+
 ## Key Features
 
 | Capability | What it does |
@@ -97,45 +110,22 @@ Narwhal follows a strict security boundary between the renderer (UI) and the run
 
 ## Screenshots
 
-<details>
-<summary><strong>Workbench</strong></summary>
+**Integrations Marketplace — MCP Servers, Runtime Extensions, Skills**
 
 <p align="center">
-  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal Workbench — Dark Theme" width="100%">
-  <sub>Main workbench with workspace picker, composer controls, and chat view. Dark theme.</sub>
-</p>
-
-</details>
-
-<details>
-<summary><strong>Integrations — MCP Servers</strong></summary>
-
-<p align="center">
-  <img src="assets/screenshots/mcp-servers-dark.png" alt="MCP Servers — Integrations" width="100%">
+  <img src="assets/screenshots/mcp-servers-dark.png" alt="MCP Servers — Integrations Marketplace" width="100%">
   <sub>Search the public MCP registry, install with one click, or add a self-developed MCP server manually (stdio or streamable-http transport).</sub>
 </p>
 
-</details>
-
-<details>
-<summary><strong>Integrations — Runtime Extensions</strong></summary>
-
 <p align="center">
-  <img src="assets/screenshots/runtime-extensions-dark.png" alt="Runtime Extensions — Integrations" width="100%">
+  <img src="assets/screenshots/runtime-extensions-dark.png" alt="Runtime Extensions — Integrations Marketplace" width="100%">
   <sub>Browse and install DSH Cordis plugin bundles — framework-level extensions that add new capabilities to the Agent runtime (sandbox shells, credential management, MCP protocol client, etc.).</sub>
 </p>
 
-</details>
-
-<details>
-<summary><strong>Integrations — Skills</strong></summary>
-
 <p align="center">
-  <img src="assets/screenshots/skills-dark.png" alt="Skills — Integrations" width="100%">
+  <img src="assets/screenshots/skills-dark.png" alt="Skills — Integrations Marketplace" width="100%">
   <sub>Add Markdown skill packs from GitHub raw URLs or git repositories. Installed skills land in <code>~/.config/narwhal/skills/</code> and are loaded into the Agent's system prompt.</sub>
 </p>
-
-</details>
 
 ## Quick Start
 
