@@ -265,7 +265,7 @@ function App() {
       {!sidebarCollapsed && <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>}
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
-        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text, attachments) => agentCall(() => api.sendPrompt(text, attachments))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''}/>} 
+        {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text, attachments) => agentCall(() => api.sendPrompt(text, attachments))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''} onOpenSettings={() => setSettingsOpen(true)}/>} 
         <footer className="statusbar">
           <div className="statusbar-context">
             <span className="statusbar-workspace" title={workspace?.displayPath ?? workspace?.name}><Icon name="folder"/>{workspace?.name ?? 'No workspace'}</span>
@@ -512,7 +512,7 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
     </div>
   </>
 }
-function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel, workbench, selectWorkspace, chooseWorkspace, mode, setMode, conversationTitle, subagentsCount = 0 }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; workbench: WorkbenchSnapshot; selectWorkspace: (id: string) => void; chooseWorkspace: () => void; mode: AgentMode; setMode: (mode: AgentMode) => void; conversationTitle: string; subagentsCount?: number }) {
+function NativeConversation({ conversation, configuration, selectModel, selectPermission, trajectoryOpen, setTrajectoryOpen, send, cancel, workbench, selectWorkspace, chooseWorkspace, mode, setMode, conversationTitle, subagentsCount = 0, onOpenSettings }: { conversation: AgentConversation; configuration: AgentConfiguration; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; trajectoryOpen: boolean; setTrajectoryOpen: (value: boolean) => void; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; workbench: WorkbenchSnapshot; selectWorkspace: (id: string) => void; chooseWorkspace: () => void; mode: AgentMode; setMode: (mode: AgentMode) => void; conversationTitle: string; subagentsCount?: number; onOpenSettings?: () => void }) {
   const trajectoryData = useMemo(() => buildTrajectoryData(conversation.trajectory), [conversation.trajectory])
   const [duration, setDuration] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -696,6 +696,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
             send={send}
             cancel={cancel}
             centered
+            onOpenSettings={onOpenSettings}
           />
         </div>
       ) : (
@@ -711,6 +712,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
             selectPermission={selectPermission}
             send={send}
             cancel={cancel}
+            onOpenSettings={onOpenSettings}
           />
         </>
       )}
@@ -780,7 +782,7 @@ function TimelineItem({ item, trajectory }: { item: ChatItem; trajectory: boolea
     </article>
   )
 }
-function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel, centered }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; centered?: boolean }) {
+function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel, centered, onOpenSettings }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; centered?: boolean; onOpenSettings?: () => void }) {
   const [text, setText] = useState('')
   const [permMenuOpen, setPermMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
@@ -790,11 +792,20 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const [commands, setCommands] = useState<readonly Command[]>([])
   const [commandOpen, setCommandOpen] = useState(false)
   const [commandIndex, setCommandIndex] = useState(0)
+  const [keyBannerDismissed, setKeyBannerDismissed] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
   const permissionTrigger = useRef<HTMLButtonElement>(null)
   const modelTrigger = useRef<HTMLButtonElement>(null)
   const effortTrigger = useRef<HTMLButtonElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
+
+  // Determine if current provider has API key configured
+  const currentProvider = useMemo(() => {
+    const pid = configuration.selectedModel?.provider
+    if (!pid) return configuration.providers.find((p) => p.active)
+    return configuration.providers.find((p) => p.id === pid) ?? configuration.providers.find((p) => p.active)
+  }, [configuration])
+  const needsApiKey = !running && !!hasSession && !!currentProvider?.active && !currentProvider.apiKeyConfigured
 
   // Load command list whenever slash menu opens
   useEffect(() => {
@@ -909,6 +920,11 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
       try { await api.executeCommand(message) } catch { /* error surfaced via event stream */ }
       return
     }
+    // Preflight: block prompt if current provider has no API key configured
+    if (needsApiKey) {
+      setKeyBannerDismissed(false)
+      return
+    }
     setText('')
     send(message, attachments.length > 0 ? attachments : undefined)
     setAttachments([])
@@ -947,6 +963,24 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const composerClass = `composer${centered ? ' composer-centered' : ''}`
 
   return (
+    <>
+    {needsApiKey && !keyBannerDismissed && (
+      <div className="missing-key-banner">
+        <div className="missing-key-banner-inner">
+          <Icon name="settings"/>
+          <span>
+            <strong>API key required</strong>
+            <small>{currentProvider?.name} doesn't have an API key configured yet.</small>
+          </span>
+        </div>
+        <div className="missing-key-banner-actions">
+          {onOpenSettings && <button type="button" className="btn-primary" onClick={onOpenSettings}>Configure</button>}
+          <button type="button" className="btn-ghost" onClick={() => setKeyBannerDismissed(true)} aria-label="Dismiss">
+            <Icon name="close"/>
+          </button>
+        </div>
+      </div>
+    )}
     <form className={composerClass} onSubmit={submit}>
       <input
         ref={fileInput}
@@ -1206,6 +1240,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
         </div>
       </div>
     </form>
+    </>
   )
 }
 function EmptyWorkspace({ open }: { open: () => void }) { return <div className="empty-state"><img src="./assets/narwhal-icon.png"/><p className="eyebrow">Your local workspace</p><h1>Give your agent a place to work.</h1><p>Open a project folder. Narwhal keeps conversations and deliverables on this Mac, separate from your code.</p><button className="primary" onClick={open}><Icon name="folder-plus"/>Open workspace</button></div> }
