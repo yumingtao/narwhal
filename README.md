@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal — DeepSeek Harness Desktop AI Agent (Dark)" width="100%">
+  <img src="assets/screenshots/workbench-hero.png" alt="Narwhal — DeepSeek Harness Desktop AI Agent (Dark)" width="100%">
 </p>
 
 > ⚠️ **Early Release** — Narwhal is a personal open-source project. This is the first public release: core features work, but there are known gaps (Windows/Linux builds, auto-update, advanced model presets, rich trajectory renderer, etc.). Bug reports, feature requests, and PRs are all welcome. Roadmap is tracked in [GitHub Issues](https://github.com/yumingtao/narwhal/issues).

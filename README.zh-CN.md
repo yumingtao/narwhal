@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/workbench-dark.png" alt="Narwhal — DeepSeek Harness 桌面 AI Agent（深色）" width="100%">
+  <img src="assets/screenshots/workbench-hero.png" alt="Narwhal — DeepSeek Harness 桌面 AI Agent（深色）" width="100%">
 </p>
 
 > ⚠️ **早期版本** — Narwhal 是一个个人开源项目。当前为首个公开发布版本：核心功能已可用，但仍有很多不足（Windows/Linux 打包、自动更新、高级模型预设、完整轨迹渲染等）。欢迎提交 Issue 和 PR，改进会逐步推出。路线图在 [GitHub Issues](https://github.com/yumingtao/narwhal/issues) 中跟踪。
