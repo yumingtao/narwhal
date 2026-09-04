@@ -81,12 +81,10 @@ export async function loadConfig(): Promise<NarwhalConfig> {
 
 export async function saveConfig(patch: Partial<NarwhalConfig>): Promise<NarwhalConfig> {
   const current = getConfig()
+  // Shallow spread — providers/mcpServers/etc. passed by callers are already
+  // complete target states. Do NOT deep-merge here or deletions silently
+  // resurrect entries from the cached config.
   const merged: NarwhalConfig = { ...current, ...patch }
-
-  // Deep-merge providers so we don't overwrite unchanged provider sections
-  if (patch.providers) {
-    merged.providers = { ...current.providers, ...patch.providers }
-  }
 
   const result = configSchema.safeParse(merged)
   if (!result.success) {
