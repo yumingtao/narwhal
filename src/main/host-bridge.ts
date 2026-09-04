@@ -747,12 +747,17 @@ export class HostBridge {
     if (displayName) profile.displayName = displayName
     const credentialRef = apiKey ? credentialRefFor(id, profile) : undefined
     if (apiKey && !credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')
-    profile.apiKeyEnv = credentialRef ?? ''  // Always include apiKeyEnv — empty string when no key set
-    await this.rpc('settings.mutate', { ns: descriptor.ns, ops: [{ op: 'set', path: [descriptor.providersPath, id], value: profile }], expectedRevision: descriptor.revision })
-    // Step 8.5: Persist to config.json so DSH picks it up on next restart
+    // DSH runtime rejects empty apiKeyEnv (credential ref must match /^[A-Za-z_][A-Za-z0-9_]*$/)
+    // So only include apiKeyEnv in the DSH payload when we have a real credential ref.
+    const dshProfile: JsonRecord = { ...profile }
+    if (credentialRef) dshProfile.apiKeyEnv = credentialRef
+    await this.rpc('settings.mutate', { ns: descriptor.ns, ops: [{ op: 'set', path: [descriptor.providersPath, id], value: dshProfile }], expectedRevision: descriptor.revision })
+    // Step 8.5: Persist to config.json — always include apiKeyEnv (empty string if no key set)
+    // so Narwhal's config.json has a consistent shape regardless of DSH's schema constraints.
     try {
+      const cfgProfile: JsonRecord = { ...profile, apiKeyEnv: credentialRef ?? '' }
       const cfg = getConfig()
-      await saveConfig({ providers: { ...(cfg.providers ?? {}), [id]: profile } })
+      await saveConfig({ providers: { ...(cfg.providers ?? {}), [id]: cfgProfile } })
     } catch (err) { console.warn('[narwhal] createProvider: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
     // Step 9: Store API key if provided
     if (!apiKey || !credentialRef) return { configuration: await this.configuration(), keyStored: true }
