@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import type { AgentConfiguration, AgentConversation, AgentSession, Attachment, ChatItem, CreateProviderResult, CustomProviderCapability, ModelProvider, ProviderSetting, UsageStats } from '../shared/desktop-contract.js'
 import { classifyTrajectory } from '../shared/trajectory-classifier.js'
+import { getConfig, saveConfig } from './config.js'
 
 type JsonRecord = Record<string, unknown>
 type Listener = (conversation: AgentConversation) => void
@@ -617,7 +618,28 @@ export class HostBridge {
   }
   async setDefaultPermission(preset: string): Promise<AgentConfiguration> { const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable'); const descriptor = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const permission = Array.isArray(descriptor.namespaces) ? descriptor.namespaces.find((item) => isRecord(item) && item.ns === 'permission') : undefined; if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable'); await this.rpc('settings.mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration() }
   async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> { const key = value.trim(); if (!/^[\x21-\x7E]+$/u.test(key) || /^(?:[A-Za-z_][A-Za-z0-9_]*)=/u.test(key)) throw new Error('API key format is invalid'); const config = await this.configuration(); const provider = config.providers.find((item) => item.id === providerId); if (!provider?.apiKeyWritable) throw new Error('This provider does not accept a local API key'); const descriptor = await this.rpc<{ providers?: unknown }>('llm.providers', {}); const row = Array.isArray(descriptor.providers) ? descriptor.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined; const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined; const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined; const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined; const profile = isRecord(section) && isRecord(section.value) && path ? valueAt(section.value, path) : undefined; if (!isRecord(profile)) throw new Error('Provider configuration is unavailable'); const reference = credentialRefFor(providerId, profile); if (!reference) throw new Error('Provider credential is unavailable'); await this.rpc('credentials.set', { ref: reference, value: key }); return this.configuration() }
-  async setProviderBaseUrl(providerId: string, value: string): Promise<AgentConfiguration> { const baseUrl = value.trim(); const url = new URL(baseUrl); if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Base URL must use HTTP or HTTPS'); const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {}); const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined; const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined; const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined; const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined; if (!ns || !path || !isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable'); await this.rpc('settings.mutate', { ns, ops: [{ op: 'set', path: [...path, 'baseURL'], value: baseUrl }], expectedRevision: section.revision }); return this.configuration() }
+  async setProviderBaseUrl(providerId: string, value: string): Promise<AgentConfiguration> {
+    const baseUrl = value.trim()
+    const url = new URL(baseUrl)
+    if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Base URL must use HTTP or HTTPS')
+    const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {})
+    const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined
+    const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined
+    const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined
+    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
+    const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined
+    if (!ns || !path || !isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
+    await this.rpc('settings.mutate', { ns, ops: [{ op: 'set', path: [...path, 'baseURL'], value: baseUrl }], expectedRevision: section.revision })
+    // Persist to config.json
+    try {
+      const cfg = getConfig()
+      const currentProviders = { ...(cfg.providers ?? {}) }
+      const existing = currentProviders[providerId] ?? {}
+      currentProviders[providerId] = { ...(existing as JsonRecord), baseURL: baseUrl }
+      await saveConfig({ providers: currentProviders })
+    } catch (err) { console.warn('[narwhal] setProviderBaseUrl: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
+    return this.configuration()
+  }
   async updateProvider(input: { provider: string; baseUrl?: string; modelIds?: string[] }): Promise<AgentConfiguration> {
     const providerId = input.provider
     // Pre-validate inputs locally before touching the runtime so an invalid
@@ -649,6 +671,17 @@ export class HostBridge {
     if (baseUrl !== undefined) ops.push({ op: 'set', path: [...path, 'baseURL'], value: baseUrl })
     if (models !== undefined) ops.push({ op: 'set', path: [...path, 'models'], value: models })
     await this.rpc('settings.mutate', { ns, ops, expectedRevision: section.revision })
+    // Persist to config.json
+    try {
+      const cfg = getConfig()
+      const currentProviders = { ...(cfg.providers ?? {}) }
+      const existing = currentProviders[providerId] ?? {}
+      const merged: JsonRecord = { ...(existing as JsonRecord) }
+      if (baseUrl !== undefined) merged.baseURL = baseUrl
+      if (models !== undefined) merged.models = models
+      currentProviders[providerId] = merged
+      await saveConfig({ providers: currentProviders })
+    } catch (err) { console.warn('[narwhal] updateProvider: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
     return this.configuration()
   }
   async deleteProvider(providerId: string): Promise<AgentConfiguration> {
@@ -664,6 +697,13 @@ export class HostBridge {
     const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
     if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
     await this.rpc('settings.mutate', { ns, ops: [{ op: 'unset', path }], expectedRevision: section.revision })
+    // Persist deletion to config.json
+    try {
+      const cfg = getConfig()
+      const providers = { ...(cfg.providers ?? {}) }
+      delete providers[providerId]
+      await saveConfig({ providers })
+    } catch (err) { console.warn('[narwhal] deleteProvider: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
     return this.configuration()
   }
   async createProvider(input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: string[]; apiKey?: string }): Promise<CreateProviderResult> {
@@ -706,6 +746,11 @@ export class HostBridge {
     if (apiKey && !credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')
     if (credentialRef) profile.apiKeyEnv = credentialRef
     await this.rpc('settings.mutate', { ns: descriptor.ns, ops: [{ op: 'set', path: [descriptor.providersPath, id], value: profile }], expectedRevision: descriptor.revision })
+    // Step 8.5: Persist to config.json so DSH picks it up on next restart
+    try {
+      const cfg = getConfig()
+      await saveConfig({ providers: { ...(cfg.providers ?? {}), [id]: profile } })
+    } catch (err) { console.warn('[narwhal] createProvider: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
     // Step 9: Store API key if provided
     if (!apiKey || !credentialRef) return { configuration: await this.configuration(), keyStored: true }
     try { await this.rpc('credentials.set', { ref: credentialRef, value: apiKey }) } catch { return { configuration: await this.configuration(), keyStored: false } }
