@@ -701,8 +701,11 @@ export class HostBridge {
     try {
       const cfg = getConfig()
       const providers = { ...(cfg.providers ?? {}) }
+      console.log(`[narwhal] deleteProvider: config.providers before delete =`, Object.keys(providers))
       delete providers[providerId]
-      await saveConfig({ providers })
+      console.log(`[narwhal] deleteProvider: deleting "${providerId}", remaining =`, Object.keys(providers))
+      const result = await saveConfig({ providers })
+      console.log(`[narwhal] deleteProvider: saveConfig returned providers =`, Object.keys(result.providers ?? {}))
     } catch (err) { console.warn('[narwhal] deleteProvider: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
     return this.configuration()
   }
@@ -744,7 +747,7 @@ export class HostBridge {
     if (displayName) profile.displayName = displayName
     const credentialRef = apiKey ? credentialRefFor(id, profile) : undefined
     if (apiKey && !credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')
-    if (credentialRef) profile.apiKeyEnv = credentialRef
+    profile.apiKeyEnv = credentialRef ?? ''  // Always include apiKeyEnv — empty string when no key set
     await this.rpc('settings.mutate', { ns: descriptor.ns, ops: [{ op: 'set', path: [descriptor.providersPath, id], value: profile }], expectedRevision: descriptor.revision })
     // Step 8.5: Persist to config.json so DSH picks it up on next restart
     try {

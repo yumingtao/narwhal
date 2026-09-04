@@ -42,7 +42,8 @@ const providerSchema = z.object({
   baseURL: z.string().url().optional(),
 
   // Credential: env var name that holds the API key (DSH resolves per request)
-  apiKeyEnv: z.string().min(1).optional(),
+  // Empty string means no API key configured yet
+  apiKeyEnv: z.string().optional(),
 
   // Models
   models: z.array(modelProfileSchema).optional(),
