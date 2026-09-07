@@ -184,6 +184,16 @@ function App() {
     return () => { unAgent(); unConversation(); unWorkbench() }
   }, [])
   useEffect(() => { if (agent.state === 'ready') void api.getAgentConfiguration().then(setConfiguration).catch(() => undefined) }, [agent.state, conversation.selectedSessionId])
+  // Refresh main-window configuration whenever Settings dialog closes, so
+  // provider/model additions, edits and deletes are immediately reflected in
+  // the composer dropdown without requiring an app restart.
+  const prevSettingsOpen = useRef(settingsOpen)
+  useEffect(() => {
+    if (prevSettingsOpen.current && !settingsOpen && agent.state === 'ready') {
+      void api.getAgentConfiguration().then(setConfiguration).catch(() => undefined)
+    }
+    prevSettingsOpen.current = settingsOpen
+  }, [settingsOpen, agent.state])
   const selectModel = async (input: { provider: string; model: string; reasoningEffort?: string }) => { try { setConfiguration(await api.selectAgentModel(input)) } catch { setError('The selected model could not be applied. Nothing was changed.') } }
   const selectPermission = async (preset: string) => { if (preset.toLowerCase().includes('full') && !window.confirm('Full access can allow unrestricted local tool operations. Continue?')) return; try { setConfiguration(await api.setDefaultPermission(preset)) } catch { setError('The selected permission could not be applied. Nothing was changed.') } }
   useEffect(() => { if (workspace && agent.state === 'ready') void agentCall(api.listSessions) }, [workspace?.id, agent.state])
