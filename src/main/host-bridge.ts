@@ -615,7 +615,7 @@ export class HostBridge {
         const info = providerInfoMap.get(id) ?? { protocol: '', baseUrl: undefined }
         const modelIds = modelRows.flatMap((m) => { if (!isRecord(m)) return []; const mid = string(m.id, 160); return mid ? [mid] : [] })
         const protocol = detectProtocol(info.protocol, id, info.baseUrl, modelIds)
-        return [{ id, name, models: modelRows.flatMap((model) => {
+        return [{ id, name, dshRunnable: true, models: modelRows.flatMap((model) => {
           if (!isRecord(model)) return []; const modelId = string(model.id, 160); const modelName = string(model.name, 160); if (!modelId || !modelName) return []
           const reasoning = isRecord(model.reasoning) ? model.reasoning : {}
           const rawEfforts = Array.isArray(reasoning.efforts) ? reasoning.efforts.flatMap((effort) => isRecord(effort) && string(effort.id, 100) && string(effort.name, 100) ? [{ id: string(effort.id, 100)!, name: string(effort.name, 100)!, description: string(effort.description, 300) }] : []) : []
@@ -628,8 +628,10 @@ export class HostBridge {
         }) }]
       })
       // Also merge models from config.json for custom providers that DSH's
-      // llm.models RPC doesn't expose. This lets ProviderRow show the model
-      // list and the "Select model" button stays enabled.
+      // llm.models RPC doesn't expose. These are marked dshRunnable: false
+      // because DSH hasn't registered an adapter for them yet — they show
+      // up in Settings (for management) but NOT in the composer model picker
+      // (until we figure out how to register adapters at runtime).
       try {
         const cfg = getConfig()
         const modelGroupIds = new Set(models.map((m) => m.id))
@@ -651,7 +653,7 @@ export class HostBridge {
             const efforts = useFallbackEfforts ? OPENAI_COMPAT_EFFORTS : []
             return [{ id: mid, name: mname, description: '', efforts, defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
           })
-          if (providerModels.length) models.push({ id: groupId, name: groupName, models: providerModels })
+          if (providerModels.length) models.push({ id: groupId, name: groupName, dshRunnable: false, models: providerModels })
         }
       } catch { /* best-effort */ }
       const permission = namespaces.find((entry) => entry.ns === 'permission'); const permissionValue = permission && isRecord(permission.value) ? permission.value : {}; const current = isRecord(sessionModels.current) ? sessionModels.current : undefined

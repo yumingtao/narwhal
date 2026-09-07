@@ -946,10 +946,15 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const currentPermission = configuration.permissionOptions.find((o) => o.id === permissionValue)
   const modelPickerDisabled = !hasSession || running || !configuration.available
 
-  // Get current model info
+  // Get current model info. Use only DSH-runnable provider groups for the
+  // composer dropdown — config-only providers (dshRunnable: false) don't
+  // have adapters registered at runtime and would cause session.selectModel
+  // to throw "no adapter registered for provider X". They still appear in
+  // Settings → Providers for management.
   const groups = configuration.models
+  const runnableGroups = groups.filter((g) => g.dshRunnable !== false)
   const selected = configuration.selectedModel
-  const provider = groups.find((item) => item.id === selected?.provider) ?? groups.find((item) => item.models.length > 0)
+  const provider = runnableGroups.find((item) => item.id === selected?.provider) ?? runnableGroups.find((item) => item.models.length > 0)
   const model = provider?.models.find((item) => item.id === selected?.model) ?? provider?.models[0]
   const isFallbackEfforts = !!model && !model.effortsNative
   const effort = isFallbackEfforts
@@ -1038,8 +1043,8 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
           if (ctx) setCommandOpen(true)
           else setCommandOpen(false)
         }}
-        placeholder={running ? 'The Agent is working…' : hasSession ? 'Describe what you want to build' : 'Select or create a conversation first'}
-        disabled={running}
+        placeholder={running ? 'The Agent is working…' : needsApiKey ? `Configure an API key for ${currentProvider?.name ?? 'this provider'} first →` : hasSession ? 'Describe what you want to build' : 'Select or create a conversation first'}
+        disabled={running || needsApiKey}
         rows={centered ? 4 : 2}
         onKeyDown={(event) => {
           const open = commandOpen && filteredCommands.length > 0
@@ -1241,7 +1246,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
             <button
               type="submit"
               className="send"
-              disabled={(!text.trim() && attachments.length === 0) || !hasSession}
+              disabled={(!text.trim() && attachments.length === 0) || !hasSession || needsApiKey}
               aria-label="Send message"
             >
               <Icon name="arrow"/>
