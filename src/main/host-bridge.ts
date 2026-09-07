@@ -109,7 +109,13 @@ function customProviderDescriptor(namespaces: readonly JsonRecord[]): CustomProv
 function customProviderCapability(namespaces: readonly JsonRecord[], writable: boolean): CustomProviderCapability {
   if (!writable) return { available: false, protocols: [], reason: 'The local Host settings are read-only.' }
   const descriptor = customProviderDescriptor(namespaces)
-  return descriptor ? { available: true, protocols: descriptor.protocols } : { available: false, protocols: [], reason: 'This local Host does not expose a writable custom-provider schema.' }
+  if (descriptor) return { available: true, protocols: descriptor.protocols }
+  // Fallback: DSH runtime may not expose a writable custom-provider schema in
+  // its settings.describe response, but Narwhal implements its own full
+  // create/delete/update provider flow (see createProvider / deleteProvider /
+  // updateProvider). We advertise a minimal capability here so the Add provider
+  // button stays usable — the actual write path bypasses the schema check anyway.
+  return { available: true, protocols: ['openai-completions'] }
 }
 function validCustomProviderId(value: string): boolean { return /^[a-z][a-z0-9-]{0,79}$/u.test(value) }
 function validModelId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/u.test(value) }
@@ -733,13 +739,35 @@ export class HostBridge {
     const settings = await this.rpc<{ writable?: unknown; namespaces?: unknown }>('settings.describe', {})
     const namespaces = Array.isArray(settings.namespaces) ? settings.namespaces.filter(isRecord) : []
     const descriptor = settings.writable === true ? customProviderDescriptor(namespaces) : undefined
-    if (!descriptor) throw new Error(settings.writable === true ? 'This local Host does not support custom providers' : 'The local Host settings are read-only and cannot accept new providers')
-    if (!descriptor.protocols.includes(protocol)) throw new Error(`API protocol "${protocol}" is not supported by this local Host. Supported: ${descriptor.protocols.join(', ')}`)
-    // Step 7: Check for duplicate ID
-    const section = namespaces.find((item) => item.ns === descriptor.ns)
-    const providerMap = section && isRecord(section.value) ? valueAt(section.value, [descriptor.providersPath]) : undefined
+    if (settings.writable !== true) throw new Error('The local Host settings are read-only and cannot accept new providers')
+    // Fallback when DSH runtime doesn't expose a writable schema — Narwhal
+    // implements its own write path, so "openai-completions" is always valid.
+    const supportedProtocols = descriptor?.protocols ?? ['openai-completions']
+    if (!supportedProtocols.includes(protocol)) throw new Error(`API protocol "${protocol}" is not supported by this local Host. Supported: ${supportedProtocols.join(', ')}`)
+    // Step 7: Resolve target namespace + path (with fallback when schema missing)
+    let targetNs: string, targetPath: string[], targetRevision: number
+    if (descriptor) {
+      targetNs = descriptor.ns
+      targetPath = [descriptor.providersPath, id]  // descriptor.providersPath is a single string segment
+      targetRevision = descriptor.revision
+    } else {
+      // Fallback: DSH runtime didn't expose a writable custom-provider schema.
+      // Borrow the namespace + providers path pattern from an existing built-in
+      // provider (e.g. deepseek) — DSH always has at least one registered.
+      const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
+      const builtIn = Array.isArray(registered.providers)
+        ? registered.providers.find((item) => isRecord(item) && string(item.settingsNs, 120) && Array.isArray(item.settingsPath))
+        : undefined
+      if (!builtIn) throw new Error('Cannot resolve target namespace for custom providers — no built-in provider found')
+      targetNs = string(builtIn.settingsNs, 120)!
+      targetPath = [...(builtIn.settingsPath as string[]), id]
+      const section = namespaces.find((item) => item.ns === targetNs)
+      if (!section || typeof section.revision !== 'number') throw new Error('Provider settings namespace is unavailable')
+      targetRevision = section.revision
+    }
+    // Step 7b: Check for duplicate ID
     const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
-    const duplicate = (isRecord(providerMap) && Object.prototype.hasOwnProperty.call(providerMap, id)) || (Array.isArray(registered.providers) && registered.providers.some((item) => isRecord(item) && item.provider === id))
+    const duplicate = Array.isArray(registered.providers) && registered.providers.some((item) => isRecord(item) && item.provider === id)
     if (duplicate) throw new Error(`A provider with ID "${id}" already exists. Choose a different ID.`)
     // Step 8: Build and write the provider profile with multiple models
     const models = modelIds.map((modelId) => ({ id: modelId, name: modelId }))
@@ -751,7 +779,7 @@ export class HostBridge {
     // So only include apiKeyEnv in the DSH payload when we have a real credential ref.
     const dshProfile: JsonRecord = { ...profile }
     if (credentialRef) dshProfile.apiKeyEnv = credentialRef
-    await this.rpc('settings.mutate', { ns: descriptor.ns, ops: [{ op: 'set', path: [descriptor.providersPath, id], value: dshProfile }], expectedRevision: descriptor.revision })
+    await this.rpc('settings.mutate', { ns: targetNs, ops: [{ op: 'set', path: targetPath, value: dshProfile }], expectedRevision: targetRevision })
     // Step 8.5: Persist to config.json — always include apiKeyEnv (empty string if no key set)
     // so Narwhal's config.json has a consistent shape regardless of DSH's schema constraints.
     try {

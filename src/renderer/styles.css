@@ -504,7 +504,8 @@ button { cursor: pointer; }
 /* Model IDs list */
 .model-ids-list { display: grid; gap: 6px; }
 .model-id-row { display: flex; gap: 6px; align-items: center; }
-.model-id-row input { flex: 1; }
+.model-id-row input { flex: 1; min-height: 30px; padding: 6px 8px; border: 1px solid var(--border-input); border-radius: 5px; background: var(--bg-input); color: var(--fg-primary); outline: 0; font-size: 12px; }
+.model-id-row input:focus { border-color: var(--accent); }
 .remove-model {
   width: 28px;
   height: 28px;
@@ -536,7 +537,8 @@ button { cursor: pointer; }
 
 .provider-row-config { display: grid; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--bg-hover); background: var(--bg-input); }
 .provider-row-config label { display: grid; gap: 6px; color: var(--fg-secondary); font-size: 11px; }
-.provider-row-config .field-action input { min-height: 32px; }
+.provider-row-config input, .provider-row-config select { min-height: 32px; padding: 6px 8px; border: 1px solid var(--border-input); border-radius: 5px; background: var(--bg-input); color: var(--fg-primary); outline: 0; font-size: 12px; }
+.provider-row-config input:focus, .provider-row-config select:focus { border-color: var(--accent); }
 .config-actions { display: flex; justify-content: flex-end; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--bg-hover); }
 .config-actions .primary { padding: 8px 16px; border: none; border-radius: 5px; background: var(--accent); color: var(--bg-deepest); font-size: 12px; font-weight: 500; cursor: pointer; transition: background .12s; }
 .config-actions .primary:hover { background: var(--accent-hover); }
