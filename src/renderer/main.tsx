@@ -946,15 +946,10 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const currentPermission = configuration.permissionOptions.find((o) => o.id === permissionValue)
   const modelPickerDisabled = !hasSession || running || !configuration.available
 
-  // Get current model info. Use only DSH-runnable provider groups for the
-  // composer dropdown — config-only providers (dshRunnable: false) don't
-  // have adapters registered at runtime and would cause session.selectModel
-  // to throw "no adapter registered for provider X". They still appear in
-  // Settings → Providers for management.
+  // Get current model info
   const groups = configuration.models
-  const runnableGroups = groups.filter((g) => g.dshRunnable !== false)
   const selected = configuration.selectedModel
-  const provider = runnableGroups.find((item) => item.id === selected?.provider) ?? runnableGroups.find((item) => item.models.length > 0)
+  const provider = groups.find((item) => item.id === selected?.provider) ?? groups.find((item) => item.models.length > 0)
   const model = provider?.models.find((item) => item.id === selected?.model) ?? provider?.models[0]
   const isFallbackEfforts = !!model && !model.effortsNative
   const effort = isFallbackEfforts
@@ -1158,7 +1153,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                   <div className="menu-overlay" onClick={() => setModelMenuOpen(false)}/>
                   <div id="composer-model-menu" className="menu-popup selector-menu model-selector-menu" role="menu" aria-label="Model selection" onClick={(e) => e.stopPropagation()}>
                     <div className="menu-section">
-                      {runnableGroups.map((group) => (
+                      {groups.map((group) => (
                         <div key={group.id} className="model-provider-group">
                           <div className="model-provider-title">{group.name}</div>
                           {group.models.map((m) => {
@@ -1273,7 +1268,7 @@ function SettingsDialog({ settings, agent, theme, setTheme, close, restart }: { 
   const load = async () => { try { setMessage(null); setConfiguration(await api.getAgentConfiguration()) } catch { setMessage({ text: 'Unable to load local Agent settings.', kind: 'error' }) } }
   useEffect(() => { void load() }, [])
   const update = async (operation: () => Promise<AgentConfiguration>, notice = 'Saved locally.') => { try { setMessage(null); setConfiguration(await operation()); if (notice) setMessage({ text: notice, kind: 'success' }) } catch { setMessage({ text: 'The local Agent rejected that setting. Nothing was changed.', kind: 'error' }) } }
-  const createProvider = async (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => { try { setMessage(null); const result = await api.createProvider(input); setConfiguration(result.configuration); if (result.dshWarning) { setMessage({ text: `Provider saved to local config, but runtime rejected its profile: ${result.dshWarning}`, kind: 'error' }); } else { setMessage({ text: result.keyStored ? 'Provider created locally.' : 'Provider was created, but the API key was rejected. Add the key from its provider row.', kind: 'success' }); } return true } catch (error) { setMessage({ text: error instanceof Error ? error.message : 'The local Agent rejected this provider. Nothing was created.', kind: 'error' }); return false } }
+  const createProvider = async (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => { try { setMessage(null); const result = await api.createProvider(input); setConfiguration(result.configuration); setMessage({ text: result.keyStored ? 'Provider created locally.' : 'Provider was created, but the API key was rejected. Add the key from its provider row.', kind: 'success' }); return true } catch (error) { setMessage({ text: error instanceof Error ? error.message : 'The local Agent rejected this provider. Nothing was created.', kind: 'error' }); return false } }
   const navigation: ReadonlyArray<{ readonly id: typeof tab; readonly label: string; readonly icon: IconName; readonly group: string }> = [
     { id: 'models', label: 'Models', icon: 'model', group: 'Agent' },
     { id: 'providers', label: 'Providers', icon: 'provider', group: 'Agent' },

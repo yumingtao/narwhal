@@ -39,7 +39,17 @@ function trajectoryFor(event: JsonRecord, type: string): { readonly label: strin
 }
 function validId(value: unknown): string | undefined { const id = string(value, 140); return id && /^[A-Za-z0-9._:-]+$/u.test(id) ? id : undefined }
 export function valueAt(record: JsonRecord, path: readonly string[]): unknown { let value: unknown = record; for (const part of path) { if (!isRecord(value)) return undefined; value = value[part] } return value }
-function credentialRefFor(provider: string, profile: JsonRecord): string | undefined { const configured = string(profile.apiKeyEnv, 120); const derived = configured ?? `${provider.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase()}_API_KEY`; return /^[A-Z][A-Z0-9_]{0,127}$/u.test(derived) ? derived : undefined }
+function credentialRefFor(provider: string, profile: JsonRecord): string | undefined {
+  // Empty string apiKeyEnv (from config.json migration or a previous partial
+  // write) falls through to the derived name — the DSH runtime rejects
+  // credential refs that don't match /^[A-Za-z_][A-Za-z0-9_]*$/ so we must
+  // always produce a valid non-empty ref before sending anything to DSH.
+  const configured = string(profile.apiKeyEnv, 120)
+  const derived = configured && configured.length > 0
+    ? configured
+    : `${provider.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase()}_API_KEY`
+  return /^[A-Z][A-Z0-9_]{0,127}$/u.test(derived) ? derived : undefined
+}
 function permissionOptions(schema: unknown): { id: string; label: string }[] {
   const label = (value: string) => value.replace(/-/gu, ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase())
   if (!isRecord(schema)) return []
@@ -615,7 +625,7 @@ export class HostBridge {
         const info = providerInfoMap.get(id) ?? { protocol: '', baseUrl: undefined }
         const modelIds = modelRows.flatMap((m) => { if (!isRecord(m)) return []; const mid = string(m.id, 160); return mid ? [mid] : [] })
         const protocol = detectProtocol(info.protocol, id, info.baseUrl, modelIds)
-        return [{ id, name, dshRunnable: true, models: modelRows.flatMap((model) => {
+        return [{ id, name, models: modelRows.flatMap((model) => {
           if (!isRecord(model)) return []; const modelId = string(model.id, 160); const modelName = string(model.name, 160); if (!modelId || !modelName) return []
           const reasoning = isRecord(model.reasoning) ? model.reasoning : {}
           const rawEfforts = Array.isArray(reasoning.efforts) ? reasoning.efforts.flatMap((effort) => isRecord(effort) && string(effort.id, 100) && string(effort.name, 100) ? [{ id: string(effort.id, 100)!, name: string(effort.name, 100)!, description: string(effort.description, 300) }] : []) : []
@@ -628,10 +638,8 @@ export class HostBridge {
         }) }]
       })
       // Also merge models from config.json for custom providers that DSH's
-      // llm.models RPC doesn't expose. These are marked dshRunnable: false
-      // because DSH hasn't registered an adapter for them yet — they show
-      // up in Settings (for management) but NOT in the composer model picker
-      // (until we figure out how to register adapters at runtime).
+      // llm.models RPC doesn't expose. This lets ProviderRow show the model
+      // list and the "Select model" button stays enabled.
       try {
         const cfg = getConfig()
         const modelGroupIds = new Set(models.map((m) => m.id))
@@ -653,7 +661,7 @@ export class HostBridge {
             const efforts = useFallbackEfforts ? OPENAI_COMPAT_EFFORTS : []
             return [{ id: mid, name: mname, description: '', efforts, defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
           })
-          if (providerModels.length) models.push({ id: groupId, name: groupName, dshRunnable: false, models: providerModels })
+          if (providerModels.length) models.push({ id: groupId, name: groupName, models: providerModels })
         }
       } catch { /* best-effort */ }
       const permission = namespaces.find((entry) => entry.ns === 'permission'); const permissionValue = permission && isRecord(permission.value) ? permission.value : {}; const current = isRecord(sessionModels.current) ? sessionModels.current : undefined
@@ -870,44 +878,40 @@ export class HostBridge {
     const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
     const duplicate = Array.isArray(registered.providers) && registered.providers.some((item) => isRecord(item) && item.provider === id)
     if (duplicate) throw new Error(`A provider with ID "${id}" already exists. Choose a different ID.`)
-    // Step 8: Build the provider profile with multiple models
+    // Step 8: Build the provider profile.
+    // IMPORTANT: apiKeyEnv MUST be a valid non-empty credential ref — DSH
+    // runtime's settings schema rejects "" (empty) and anything not matching
+    // /^[A-Za-z_][A-Za-z0-9_]*$/. We always derive one from the provider id
+    // (e.g. "LLM_PI_AI_MY_GATEWAY") even when the user hasn't stored an API
+    // key yet. This lets DSH's pi-ai plugin register an adapter for this
+    // route so session.selectModel and session.prompt work; the actual
+    // request will fail auth naturally when no credential is configured.
     const models = modelIds.map((modelId) => ({ id: modelId, name: modelId }))
     const profile: JsonRecord = { baseURL: baseUrl, api: protocol, models }
     if (displayName) profile.displayName = displayName
-    const credentialRef = apiKey ? credentialRefFor(id, profile) : undefined
-    if (apiKey && !credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')
-    // Step 8.5: Persist to config.json FIRST — this is our authoritative store.
-    // Even if DSH's runtime rejects the write (e.g. model IDs with hyphens),
-    // configuration() will merge this custom provider from config.json so the
-    // UI still shows it.
-    const cfgProfile: JsonRecord = { ...profile, apiKeyEnv: credentialRef ?? '' }
+    const credentialRef = credentialRefFor(id, profile)
+    if (!credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')
+    profile.apiKeyEnv = credentialRef
+    // Step 9: Write to DSH runtime settings namespace. This is the critical
+    // write — DSH's pi-ai plugin watches its own namespace and re-registers
+    // adapters on change. Without this, session.selectModel throws
+    // "no adapter registered for provider X".
+    await this.rpc('settings.mutate', { ns: targetNs, ops: [{ op: 'set', path: targetPath, value: profile }], expectedRevision: targetRevision })
+    // Step 10: Persist to config.json (authoritative store for Narwhal)
     try {
       const cfg = getConfig()
-      await saveConfig({ providers: { ...(cfg.providers ?? {}), [id]: cfgProfile } })
+      await saveConfig({ providers: { ...(cfg.providers ?? {}), [id]: profile } })
     } catch (err) {
       console.warn('[narwhal] createProvider: saveConfig failed:', err instanceof Error ? err.message : String(err))
-      throw new Error('Could not save provider to local config file. Please check disk permissions.')
     }
-    // Step 9: Write to DSH runtime settings namespace (best-effort — DSH may
-    // reject certain values with its own stricter validation, e.g. model IDs).
-    // If it fails, config.json already has the provider so the UI works.
-    const dshProfile: JsonRecord = { ...profile }
-    if (credentialRef) dshProfile.apiKeyEnv = credentialRef
-    let dshWarning: string | undefined
-    try {
-      await this.rpc('settings.mutate', { ns: targetNs, ops: [{ op: 'set', path: targetPath, value: dshProfile }], expectedRevision: targetRevision })
-    } catch (err) {
-      dshWarning = err instanceof Error ? err.message : String(err)
-      console.warn('[narwhal] createProvider: DSH settings.mutate failed (config.json saved):', dshWarning)
-    }
-    // Step 10: Store API key if provided (best-effort)
-    if (!apiKey || !credentialRef) {
+    // Step 11: Store API key if provided
+    if (!apiKey) {
       const cfg = await this.configuration()
-      return { configuration: cfg, keyStored: true, dshWarning }
+      return { configuration: cfg, keyStored: true }
     }
     let keyStored = true
     try { await this.rpc('credentials.set', { ref: credentialRef, value: apiKey }) } catch { keyStored = false }
     const cfg = await this.configuration()
-    return { configuration: cfg, keyStored, dshWarning }
+    return { configuration: cfg, keyStored }
   }
 }

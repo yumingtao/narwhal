@@ -37,11 +37,11 @@ export interface ProviderOptions {
 type ReadonlyRecord<K extends string, V> = { readonly [key in K]?: V }
 export interface ModelEffort { readonly id: string; readonly name: string; readonly description?: string }
 export interface AgentModel { readonly id: string; readonly name: string; readonly description?: string; readonly efforts: readonly ModelEffort[]; readonly defaultEffort?: string; readonly effortsNative?: boolean }
-export interface ModelProvider { readonly id: string; readonly name: string; readonly models: readonly AgentModel[]; /** true = DSH runtime has an adapter registered for this provider (selectable in composer); false = surfaced only in Settings for management */ readonly dshRunnable?: boolean }
+export interface ModelProvider { readonly id: string; readonly name: string; readonly models: readonly AgentModel[] }
 export interface ProviderSetting { readonly id: string; readonly name: string; readonly active: boolean; readonly apiKeyConfigured: boolean; readonly apiKeyWritable: boolean; readonly baseUrl?: string; readonly protocol?: string }
 export interface CustomProviderCapability { readonly available: boolean; readonly protocols: readonly string[]; readonly reason?: string }
 export interface AgentConfiguration { readonly available: boolean; readonly writable: boolean; readonly providers: readonly ProviderSetting[]; readonly models: readonly ModelProvider[]; readonly defaultPermission?: string; readonly permissionOptions: readonly { readonly id: string; readonly label: string }[]; readonly customProvider: CustomProviderCapability; readonly selectedModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }; readonly error?: string }
-export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean; readonly dshWarning?: string }
+export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean }
 export interface Command { readonly name: string; readonly description: string; readonly input?: { readonly hint?: string; readonly images?: boolean } }
 export interface CommandResult { readonly kind: 'success' | 'error'; readonly text?: string }
 // --- Integrations: MCP / Plugins / Skills ---
