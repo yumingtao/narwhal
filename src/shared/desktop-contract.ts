@@ -41,7 +41,7 @@ export interface ModelProvider { readonly id: string; readonly name: string; rea
 export interface ProviderSetting { readonly id: string; readonly name: string; readonly active: boolean; readonly apiKeyConfigured: boolean; readonly apiKeyWritable: boolean; readonly baseUrl?: string; readonly protocol?: string }
 export interface CustomProviderCapability { readonly available: boolean; readonly protocols: readonly string[]; readonly reason?: string }
 export interface AgentConfiguration { readonly available: boolean; readonly writable: boolean; readonly providers: readonly ProviderSetting[]; readonly models: readonly ModelProvider[]; readonly defaultPermission?: string; readonly permissionOptions: readonly { readonly id: string; readonly label: string }[]; readonly customProvider: CustomProviderCapability; readonly selectedModel?: { readonly provider: string; readonly model: string; readonly reasoningEffort?: string }; readonly error?: string }
-export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean }
+export interface CreateProviderResult { readonly configuration: AgentConfiguration; readonly keyStored: boolean; readonly dshWarning?: string }
 export interface Command { readonly name: string; readonly description: string; readonly input?: { readonly hint?: string; readonly images?: boolean } }
 export interface CommandResult { readonly kind: 'success' | 'error'; readonly text?: string }
 // --- Integrations: MCP / Plugins / Skills ---
