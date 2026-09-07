@@ -1158,7 +1158,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                   <div className="menu-overlay" onClick={() => setModelMenuOpen(false)}/>
                   <div id="composer-model-menu" className="menu-popup selector-menu model-selector-menu" role="menu" aria-label="Model selection" onClick={(e) => e.stopPropagation()}>
                     <div className="menu-section">
-                      {groups.map((group) => (
+                      {runnableGroups.map((group) => (
                         <div key={group.id} className="model-provider-group">
                           <div className="model-provider-title">{group.name}</div>
                           {group.models.map((m) => {
