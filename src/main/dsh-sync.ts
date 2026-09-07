@@ -275,9 +275,22 @@ function buildSettingsYaml(config: NarwhalConfig, configPath: string): string {
 
   // llm-pi-ai.providers
   if (Object.keys(config.providers).length > 0) {
-    doc['llm-pi-ai'] = {
-      providers: config.providers,
+    // DSH runtime's pi-ai plugin rejects apiKeyEnv: "" (empty string) —
+    // credentialRef("") throws TypeError, the whole provider gets dropped,
+    // no adapter registered. Derive a valid credential ref from provider id
+    // whenever the stored apiKeyEnv is empty or missing.
+    const fixedProviders: Record<string, ProviderProfile> = {}
+    for (const [id, profile] of Object.entries(config.providers)) {
+      const env = (profile as any).apiKeyEnv
+      const needsDerive = !env || env.length === 0
+      if (!needsDerive) {
+        fixedProviders[id] = profile
+      } else {
+        const derived = id.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase() + '_API_KEY'
+        fixedProviders[id] = { ...profile, apiKeyEnv: derived }
+      }
     }
+    doc['llm-pi-ai'] = { providers: fixedProviders }
   }
 
   // agent-default-model
