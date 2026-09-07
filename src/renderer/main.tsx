@@ -802,7 +802,6 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const [commands, setCommands] = useState<readonly Command[]>([])
   const [commandOpen, setCommandOpen] = useState(false)
   const [commandIndex, setCommandIndex] = useState(0)
-  const [keyBannerDismissed, setKeyBannerDismissed] = useState(false)
   const input = useRef<HTMLTextAreaElement>(null)
   const permissionTrigger = useRef<HTMLButtonElement>(null)
   const modelTrigger = useRef<HTMLButtonElement>(null)
@@ -932,7 +931,6 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
     }
     // Preflight: block prompt if current provider has no API key configured
     if (needsApiKey) {
-      setKeyBannerDismissed(false)
       return
     }
     setText('')
@@ -974,24 +972,17 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
 
   return (
     <>
-    {needsApiKey && !keyBannerDismissed && (
-      <div className="missing-key-banner">
-        <div className="missing-key-banner-inner">
+    <form className={composerClass} onSubmit={submit}>
+      {needsApiKey && (
+        <div className="missing-key-inline">
           <Icon name="settings"/>
           <span>
             <strong>API key required</strong>
             <small>{currentProvider?.name} doesn't have an API key configured yet.</small>
           </span>
-        </div>
-        <div className="missing-key-banner-actions">
           {onOpenSettings && <button type="button" className="btn-primary" onClick={onOpenSettings}>Configure</button>}
-          <button type="button" className="btn-ghost" onClick={() => setKeyBannerDismissed(true)} aria-label="Dismiss">
-            <Icon name="close"/>
-          </button>
         </div>
-      </div>
-    )}
-    <form className={composerClass} onSubmit={submit}>
+      )}
       <input
         ref={fileInput}
         type="file"

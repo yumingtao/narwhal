@@ -494,6 +494,29 @@ async function bootstrap(): Promise<void> {
   const dshHome = join(app.getPath('userData'), 'dsh-home')
   try { await mkdir(dshHome, { recursive: true, mode: 0o700 }) } catch (e) { console.warn('[narwhal] dsh-home mkdir failed:', e instanceof Error ? e.message : String(e)) }
   try { selectedRuntime = resolveRuntime(); console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry) } catch (e) { console.error('[narwhal] bootstrap: resolveRuntime FAILED:', e instanceof Error ? e.message : String(e)); throw e }
+  try {
+    // Repair any providers in config.json with empty/missing apiKeyEnv before
+    // syncing to DSH. DSH's settings schema rejects apiKeyEnv: "" and the whole
+    // provider silently disappears from runtime — so we fix it here by deriving
+    // a valid credential ref ("PROVIDER_ID_API_KEY") from each broken id.
+    const cfg = getConfig()
+    let repaired = false
+    const repairedProviders: Record<string, any> = {}
+    for (const [id, profile] of Object.entries(cfg.providers ?? {})) {
+      const env = (profile as any).apiKeyEnv
+      if (!env || env.length === 0) {
+        const derived = id.replace(/[^A-Za-z0-9]/gu, '_').toUpperCase() + '_API_KEY'
+        repairedProviders[id] = { ...(profile as any), apiKeyEnv: derived }
+        repaired = true
+      } else {
+        repairedProviders[id] = profile
+      }
+    }
+    if (repaired) {
+      console.log('[narwhal] bootstrap: repaired apiKeyEnv for providers:', Object.keys(repairedProviders).filter(k => !(cfg.providers ?? {})[k]?.apiKeyEnv).join(', '))
+      await saveConfig({ ...cfg, providers: repairedProviders })
+    }
+  } catch (e) { /* best-effort — config load above already succeeded */ }
   try { await syncToDsh() } catch (e) { console.error('[narwhal] syncToDsh failed (non-fatal):', e instanceof Error ? e.message : String(e)) }
   activeSupervisor = createHostSupervisor(() => spawn(selectedRuntime!.nodeExecutable, [...selectedRuntime!.launchArguments, '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
   hostBridge.subscribe((conversation) => { emitConversation(conversation); scheduleWorkbenchRefresh() })

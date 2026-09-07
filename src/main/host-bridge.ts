@@ -590,8 +590,11 @@ export class HostBridge {
           if (!isRecord(profile)) continue
           const id = validId(idRaw); const name = string(profile.displayName, 120) ?? id
           if (!id || !name) continue
-          const apiKeyEnv = string(profile.apiKeyEnv, 120)
-          const credential = apiKeyEnv && isRecord(credentialMap[apiKeyEnv]) ? credentialMap[apiKeyEnv] : undefined
+          // Use credentialRefFor so empty/missing apiKeyEnv falls through to
+          // the derived name — DSH expects a valid non-empty ref to look up
+          // the stored key, and this matches what the DSH settings write path uses.
+          const ref = credentialRefFor(id, profile)
+          const credential = ref && isRecord(credentialMap[ref]) ? credentialMap[ref] : undefined
           normalizedProviders.push({
             id, name,
             active: true,
