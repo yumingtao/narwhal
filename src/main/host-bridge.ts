@@ -673,18 +673,34 @@ export class HostBridge {
     return { ...config, selectedModel }
   }
   async setDefaultPermission(preset: string): Promise<AgentConfiguration> { const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable'); const descriptor = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const permission = Array.isArray(descriptor.namespaces) ? descriptor.namespaces.find((item) => isRecord(item) && item.ns === 'permission') : undefined; if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable'); await this.rpc('settings.mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration() }
-  async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> { const key = value.trim(); if (!/^[\x21-\x7E]+$/u.test(key) || /^(?:[A-Za-z_][A-Za-z0-9_]*)=/u.test(key)) throw new Error('API key format is invalid'); const config = await this.configuration(); const provider = config.providers.find((item) => item.id === providerId); if (!provider?.apiKeyWritable) throw new Error('This provider does not accept a local API key'); const descriptor = await this.rpc<{ providers?: unknown }>('llm.providers', {}); const row = Array.isArray(descriptor.providers) ? descriptor.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined; const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined; const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined; const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined; const profile = isRecord(section) && isRecord(section.value) && path ? valueAt(section.value, path) : undefined; if (!isRecord(profile)) throw new Error('Provider configuration is unavailable'); const reference = credentialRefFor(providerId, profile); if (!reference) throw new Error('Provider credential is unavailable'); await this.rpc('credentials.set', { ref: reference, value: key }); return this.configuration() }
+  async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> {
+    const key = value.trim()
+    if (!/^[\x21-\x7E]+$/u.test(key) || /^(?:[A-Za-z_][A-Za-z0-9_]*)=/u.test(key)) throw new Error('API key format is invalid')
+    const config = await this.configuration()
+    const provider = config.providers.find((item) => item.id === providerId)
+    if (!provider?.apiKeyWritable) throw new Error('This provider does not accept a local API key')
+    const resolved = await this.resolveProviderNsPath(providerId)
+    if (!resolved) throw new Error('Provider settings are unavailable')
+    const { ns, path } = resolved
+    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
+    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
+    const profile = isRecord(section) && isRecord(section.value) ? valueAt(section.value, path) : undefined
+    if (!isRecord(profile)) throw new Error('Provider configuration is unavailable')
+    const reference = credentialRefFor(providerId, profile)
+    if (!reference) throw new Error('Provider credential is unavailable')
+    await this.rpc('credentials.set', { ref: reference, value: key })
+    return this.configuration()
+  }
   async setProviderBaseUrl(providerId: string, value: string): Promise<AgentConfiguration> {
     const baseUrl = value.trim()
     const url = new URL(baseUrl)
     if (!['https:', 'http:'].includes(url.protocol)) throw new Error('Base URL must use HTTP or HTTPS')
-    const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {})
-    const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined
-    const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined
-    const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined
+    const resolved = await this.resolveProviderNsPath(providerId)
+    if (!resolved) throw new Error('Provider settings are unavailable')
+    const { ns, path } = resolved
     const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
-    const section = ns ? (Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined) : undefined
-    if (!ns || !path || !isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
+    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
+    if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
     await this.rpc('settings.mutate', { ns, ops: [{ op: 'set', path: [...path, 'baseURL'], value: baseUrl }], expectedRevision: section.revision })
     // Persist to config.json
     try {
@@ -715,11 +731,9 @@ export class HostBridge {
       models = modelIds.map((modelId) => ({ id: modelId, name: modelId }))
     }
     if (baseUrl === undefined && models === undefined) return this.configuration()
-    const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {})
-    const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined
-    const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined
-    const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined
-    if (!ns || !path) throw new Error('Provider settings are unavailable')
+    const resolved = await this.resolveProviderNsPath(providerId)
+    if (!resolved) throw new Error('Provider settings are unavailable')
+    const { ns, path } = resolved
     const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
     const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
     if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
@@ -741,30 +755,65 @@ export class HostBridge {
     return this.configuration()
   }
   async deleteProvider(providerId: string): Promise<AgentConfiguration> {
-    const providers = await this.rpc<{ providers?: unknown }>('llm.providers', {})
-    const row = Array.isArray(providers.providers) ? providers.providers.find((item) => isRecord(item) && item.provider === providerId) : undefined
-    const ns = isRecord(row) ? string(row.settingsNs, 120) : undefined
-    const path = isRecord(row) && Array.isArray(row.settingsPath) && row.settingsPath.every((part) => typeof part === 'string') ? row.settingsPath as string[] : undefined
-    if (!ns || !path) throw new Error('Provider not found')
-    // An empty path targets a built-in root provider (e.g. deepseek-official);
-    // unsetting it would wipe the whole namespace, so refuse it up front.
-    if (path.length === 0) throw new Error('Built-in providers cannot be removed')
-    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
-    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
-    if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
-    await this.rpc('settings.mutate', { ns, ops: [{ op: 'unset', path }], expectedRevision: section.revision })
-    // Persist deletion to config.json
-    try {
-      const cfg = getConfig()
-      const providers = { ...(cfg.providers ?? {}) }
-      console.log(`[narwhal] deleteProvider: config.providers before delete =`, Object.keys(providers))
-      delete providers[providerId]
-      console.log(`[narwhal] deleteProvider: deleting "${providerId}", remaining =`, Object.keys(providers))
-      const result = await saveConfig({ providers })
-      console.log(`[narwhal] deleteProvider: saveConfig returned providers =`, Object.keys(result.providers ?? {}))
-    } catch (err) { console.warn('[narwhal] deleteProvider: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
+    // Delete from config.json FIRST (authoritative store). If the provider
+    // isn't even in config.json and DSH can't resolve it either, that's an
+    // error — user is trying to delete something that doesn't exist.
+    const cfg = getConfig()
+    const inConfig = cfg.providers && providerId in cfg.providers
+    // Try to resolve DSH namespace/path (may fail for config-only providers)
+    const resolved = await this.resolveProviderNsPath(providerId)
+    if (!inConfig && !resolved) throw new Error('Provider not found')
+    if (resolved && resolved.path.length === 0) throw new Error('Built-in providers cannot be removed')
+    // 1) Remove from DSH settings namespace (best-effort — may fail for
+    //    config-only providers that never wrote into DSH).
+    if (resolved) {
+      try {
+        const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
+        const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === resolved.ns) : undefined
+        if (isRecord(section) && typeof section.revision === 'number') {
+          await this.rpc('settings.mutate', { ns: resolved.ns, ops: [{ op: 'unset', path: resolved.path }], expectedRevision: section.revision })
+        }
+      } catch (err) {
+        console.warn('[narwhal] deleteProvider: DSH unset failed (config.json still being updated):', err instanceof Error ? err.message : String(err))
+      }
+    }
+    // 2) Remove from config.json
+    if (inConfig) {
+      const currentProviders = { ...(cfg.providers ?? {}) }
+      delete currentProviders[providerId]
+      await saveConfig({ providers: currentProviders })
+    }
     return this.configuration()
   }
+
+  /** Resolve the { ns, path } for a provider. First tries llm.providers RPC
+   *  (works for built-in providers). If DSH doesn't expose the target there
+   *  (common for custom providers created via settings.yaml), borrows ns +
+   *  path template from an existing built-in provider and replaces its id
+   *  segment with the target id. Returns null when neither yields usable coords. */
+  private async resolveProviderNsPath(providerId: string): Promise<{ ns: string; path: string[] } | null> {
+    try {
+      const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
+      const arr = Array.isArray(registered.providers) ? registered.providers.filter(isRecord) : []
+      // Direct match
+      const direct = arr.find((item) => item.provider === providerId)
+      if (direct) {
+        const ns = string(direct.settingsNs, 120)
+        const pathArr = Array.isArray(direct.settingsPath)
+          ? direct.settingsPath.every((p) => typeof p === 'string') ? direct.settingsPath as string[] : undefined
+          : undefined
+        if (ns && pathArr) return { ns, path: pathArr }
+      }
+      // Fallback: borrow from a built-in provider
+      const builtIn = arr.find((item) => string(item.settingsNs, 120) && Array.isArray(item.settingsPath) && item.settingsPath.every((p) => typeof p === 'string'))
+      if (!builtIn) return null
+      const bNs = string(builtIn.settingsNs, 120)!
+      const bPath = builtIn.settingsPath as string[]
+      const fallbackPath = [...bPath.slice(0, -1), providerId]
+      return { ns: bNs, path: fallbackPath }
+    } catch { return null }
+  }
+
   async createProvider(input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: string[]; apiKey?: string }): Promise<CreateProviderResult> {
     const id = input.id.trim(); const displayName = input.displayName?.trim(); const baseUrl = input.baseUrl.trim(); const protocol = input.protocol.trim(); const modelIds = input.modelIds.map((m) => m.trim()).filter(Boolean); const apiKey = input.apiKey?.trim()
     const errors: string[] = []
