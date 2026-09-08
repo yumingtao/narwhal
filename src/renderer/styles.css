@@ -693,8 +693,8 @@ button { cursor: pointer; }
 .send:hover { background: var(--accent-hover); }
 .send:active { transform: scale(0.95); }
 .send:disabled { background: var(--border); color: var(--fg-muted); cursor: not-allowed; }
-.cancel-turn { height: 28px; padding: 0 14px; background: var(--bg-danger); color: var(--error-soft); font-size: 12px; font-weight: 500; }
-.cancel-turn:hover { background: var(--bg-danger); }
+.cancel-turn { width: 32px; height: 32px; padding: 0; background: var(--bg-danger); color: var(--error-soft); }
+.cancel-turn:hover { background: var(--border-danger); }
 /* Empty chat centered layout */
 .native-conversation.empty-chat { display: grid; grid-template-rows: auto 1fr; }
 .empty-chat-container {

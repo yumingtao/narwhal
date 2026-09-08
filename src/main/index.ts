@@ -150,7 +150,12 @@ async function inspectGit(workspace?: StoredWorkspace): Promise<{ branch?: strin
 }
 async function snapshot(): Promise<WorkbenchSnapshot> {
   const workspace = selected()
-  return { workspaces: store.workspaces.map(workspaceSummary), selectedWorkspaceId: store.selectedWorkspaceId, conversations: workspace?.conversations ?? [], selectedConversationId: workspace?.selectedConversationId, deliverables: workspace?.deliverables ?? [], panelOpen: workspace?.panelOpen ?? store.panelOpen ?? false, git: await inspectGit(workspace), conversation: hostBridge.snapshot() }
+  const snap = hostBridge.snapshot()
+  // Filter out sessions whose cwd no longer matches any surviving workspace path
+  const survivingPaths = new Set(store.workspaces.map((w) => w.path))
+  const filteredSessions = snap.sessions.filter((s) => !s.cwd || survivingPaths.has(s.cwd))
+  const filteredSelected = filteredSessions.some((s) => s.id === snap.selectedSessionId) ? snap.selectedSessionId : undefined
+  return { workspaces: store.workspaces.map(workspaceSummary), selectedWorkspaceId: store.selectedWorkspaceId, conversations: workspace?.conversations ?? [], selectedConversationId: workspace?.selectedConversationId, deliverables: workspace?.deliverables ?? [], panelOpen: workspace?.panelOpen ?? store.panelOpen ?? false, git: await inspectGit(workspace), conversation: { ...snap, sessions: filteredSessions, selectedSessionId: filteredSelected } }
 }
 function requireWorkspace(id?: string): StoredWorkspace {
   const result = (id ? store.workspaces.find((item) => item.id === id) : selected())

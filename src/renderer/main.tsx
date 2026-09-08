@@ -147,7 +147,7 @@ function App() {
   const selectedConversation = useMemo(() => workbench.conversations.find((conv) => conv.id === workbench.selectedConversationId) ?? workbench.conversations[0], [workbench])
   const workspace = workbench.workspaces.find((item) => item.id === workbench.selectedWorkspaceId)
   const mutate = async (operation: () => Promise<WorkbenchSnapshot>) => { try { setError(''); const next = await operation(); setWorkbench(next); setConversation(next.conversation) } catch { setError('We couldn’t complete that action. Your local files were not changed.') } }
-  const agentCall = async (operation: () => Promise<AgentConversation>) => { try { setError(''); setConversation(await operation()) } catch { setError('The local Agent could not complete that request. Check its status and try again.') } }
+  const agentCall = async (operation: () => Promise<AgentConversation>) => { try { setError(''); setConversation(await operation()) } catch (err) { const detail = err instanceof Error ? err.message : String(err); setError(`Agent error: ${detail}`) } }
   const createSession = async (workspaceId: string) => {
     try {
       setError('')
@@ -1240,7 +1240,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
         </div>
         <div className="composer-bar-right">
           {running ? (
-            <button type="button" className="cancel-turn" onClick={cancel}>Stop</button>
+            <button type="button" className="cancel-turn" onClick={cancel} aria-label="Stop generation"><Icon name="stop" size={16}/></button>
           ) : (
             <button
               type="submit"
