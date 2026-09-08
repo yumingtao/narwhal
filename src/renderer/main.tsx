@@ -975,12 +975,14 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
     <form className={composerClass} onSubmit={submit}>
       {needsApiKey && (
         <div className="missing-key-inline">
-          <Icon name="settings"/>
-          <span>
-            <strong>API key required</strong>
+          <Icon name="error" size={14}/>
+          <div className="missing-key-body">
+            <div className="missing-key-title">
+              <strong>API key required</strong>
+              {onOpenSettings && <button type="button" className="btn-primary" onClick={onOpenSettings}>Configure</button>}
+            </div>
             <small>{currentProvider?.name} doesn't have an API key configured yet.</small>
-          </span>
-          {onOpenSettings && <button type="button" className="btn-primary" onClick={onOpenSettings}>Configure</button>}
+          </div>
         </div>
       )}
       <input
