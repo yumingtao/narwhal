@@ -152,9 +152,27 @@ export class HostBridge {
   private decodeTokens = 0
   private decodeMs = 0
   private cacheReadTokens = 0
+  /** Cwd values of all surviving workspaces. Sessions whose cwd is NOT in this set are filtered out. */
+  private survivingCwds = new Set<string>()
+  private cwdsInitialized = false
+
+  /** Called by main process whenever workspace list changes. */
+  setSurvivingCwds(paths: Iterable<string>): void {
+    this.survivingCwds = new Set(paths)
+    this.cwdsInitialized = true
+    // Remove any now-orphaned sessions from memory
+    const before = this.sessions.length
+    this.sessions = this.sessions.filter((s) => !s.cwd || this.survivingCwds.has(s.cwd))
+    if (this.selectedSessionId && !this.sessions.some((s) => s.id === this.selectedSessionId)) this.resetSelectedSession()
+    if (this.sessions.length !== before) this.emit()
+  }
+  private filterSessions(sessions: AgentSession[]): AgentSession[] {
+    if (!this.cwdsInitialized) return sessions  // no filter yet (bootstrap before first sync)
+    return sessions.filter((s) => !s.cwd || this.survivingCwds.has(s.cwd))
+  }
 
   subscribe(listener: Listener): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener) }
-  snapshot(): AgentConversation { return { sessions: this.sessions, selectedSessionId: this.selectedSessionId, messages: this.messages, trajectory: this.trajectory, running: this.running, ...(this.usage && { usage: this.usage }) } }
+  snapshot(): AgentConversation { return { sessions: this.filterSessions(this.sessions), selectedSessionId: this.selectedSessionId, messages: this.messages, trajectory: this.trajectory, running: this.running, ...(this.usage && { usage: this.usage }) } }
   private emit(): void { const value = this.snapshot(); for (const listener of this.listeners) listener(value) }
   private resetSelectedSession(): void {
     this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false; this.seenEventIds.clear(); this.usage = undefined; this.openSteps.clear(); this.totalTtft = 0; this.ttftSamples = 0; this.decodeTokens = 0; this.decodeMs = 0; this.cacheReadTokens = 0
@@ -307,13 +325,6 @@ export class HostBridge {
     if (this.selectedSessionId && !this.sessions.some((item) => item.id === this.selectedSessionId)) this.resetSelectedSession()
     this.emit(); return this.snapshot()
   }
-  /** Remove all in-memory sessions whose cwd matches the deleted workspace path. */
-  purgeSessionsForCwd(cwd: string): void {
-    const before = this.sessions.length
-    this.sessions = this.sessions.filter((s) => s.cwd !== cwd)
-    if (this.selectedSessionId && !this.sessions.some((s) => s.id === this.selectedSessionId)) this.resetSelectedSession()
-    if (this.sessions.length !== before) this.emit()
-  }
   async createSession(cwd: string): Promise<AgentConversation> {
     const value = await this.rpc<{ sessionId?: unknown }>('session.create', { cwd })
     const id = validId(value.sessionId); if (!id) throw new Error('Local Agent returned an invalid session')
@@ -347,14 +358,18 @@ export class HostBridge {
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
     this.running = true; this.emit()
     for (const delay of [1_000, 3_000, 8_000]) setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, delay)
-    // Safety timeout: fake/unreachable providers hang forever — surface error after 60s
+    // Safety timeout: fake/unreachable providers hang forever — surface error after 20s
     setTimeout(() => {
       if (this.running && this.selectedSessionId === sessionId) {
+        console.log('[host-bridge] prompt timeout fired for session', sessionId)
         this.running = false
-        this.pushTrajectory({ id: `timeout-${randomUUID()}`, kind: 'error', label: 'Request timed out', text: 'The Agent did not get a response within 60s. The model may be unreachable — check base URL and API key.', time: Date.now() })
+        const timeoutErr: ChatItem = { id: `timeout-${randomUUID()}`, kind: 'error', text: 'The Agent did not receive a response within 20 seconds. Check that the provider base URL is reachable and the API key is valid.', time: Date.now() }
+        this.messages = [...this.messages, timeoutErr].slice(-MAX_ITEMS)
+        this.pushTrajectory({ ...timeoutErr, label: 'Request timed out' }, false)  // also to trajectory panel
+        this.emit()
         void this.cancel().catch(() => undefined)
       }
-    }, 60_000)
+    }, 20_000)
     return this.snapshot()
   }
   async cancel(): Promise<void> { if (this.selectedSessionId) { await this.rpc('session.cancel', { sessionId: this.selectedSessionId }); this.running = false; this.emit() } }

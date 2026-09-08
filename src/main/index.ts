@@ -151,12 +151,13 @@ async function inspectGit(workspace?: StoredWorkspace): Promise<{ branch?: strin
 async function snapshot(): Promise<WorkbenchSnapshot> {
   const workspace = selected()
   const snap = hostBridge.snapshot()
-  // Filter out sessions whose cwd no longer matches any surviving workspace path
   const survivingPaths = new Set(store.workspaces.map((w) => w.path))
   const filteredSessions = snap.sessions.filter((s) => !s.cwd || survivingPaths.has(s.cwd))
   const filteredSelected = filteredSessions.some((s) => s.id === snap.selectedSessionId) ? snap.selectedSessionId : undefined
   return { workspaces: store.workspaces.map(workspaceSummary), selectedWorkspaceId: store.selectedWorkspaceId, conversations: workspace?.conversations ?? [], selectedConversationId: workspace?.selectedConversationId, deliverables: workspace?.deliverables ?? [], panelOpen: workspace?.panelOpen ?? store.panelOpen ?? false, git: await inspectGit(workspace), conversation: { ...snap, sessions: filteredSessions, selectedSessionId: filteredSelected } }
 }
+/** Keep HostBridge's in-memory session filter in sync with store.workspaces. */
+function syncSurvivingCwds(): void { hostBridge.setSurvivingCwds(store.workspaces.map((w) => w.path)) }
 function requireWorkspace(id?: string): StoredWorkspace {
   const result = (id ? store.workspaces.find((item) => item.id === id) : selected())
   if (!result) throw new Error('Choose a workspace first')
@@ -169,6 +170,7 @@ async function chooseWorkspace(): Promise<WorkbenchSnapshot> {
   let workspace = store.workspaces.find((item) => item.path === path)
   if (!workspace) { workspace = { id: randomUUID(), path, name: basename(path), lastOpenedAt: now, conversations: [], deliverables: [], panelOpen: false }; store.workspaces.unshift(workspace) }
   workspace.lastOpenedAt = now; store.selectedWorkspaceId = workspace.id; store.workspaces = store.workspaces.slice(0, 12); await persist()
+  syncSurvivingCwds()
   if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }
   return snapshot()
 }
@@ -212,6 +214,7 @@ async function startHost(): Promise<void> {
   agent = { state: 'starting' }; emitAgent()
   const generation = await getSupervisor().start()
   await hostBridge.start(generation.origin)
+  syncSurvivingCwds()
   agent = { state: 'ready', origin: generation.origin }; emitAgent()
   const workspace = selected()
   if (workspace) { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }
@@ -223,9 +226,9 @@ function registerIpc(): void {
   ipcMain.handle('narwhal:save-config', async (event, raw) => { sender(event); const value = asRecord(raw); return saveConfig(value as any) })
   ipcMain.handle('narwhal:get-config-path', async (event) => { sender(event); return getConfigPath() })
   ipcMain.handle('narwhal:choose-workspace', async (event) => { sender(event); return chooseWorkspace() })
-  ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })
+  ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })
   ipcMain.handle('narwhal:rename-workspace', async (event, raw) => { sender(event); const value = asRecord(raw); const id = asString(value.workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); const name = asString(value.name, 'workspace name', 120); if (!name) throw new Error('Workspace name is required'); workspace.name = name; await persist(); return snapshot() })
-  ipcMain.handle('narwhal:delete-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.workspaces = store.workspaces.filter((item) => item.id !== id); if (store.selectedWorkspaceId === id) { store.selectedWorkspaceId = store.workspaces[0]?.id } hostBridge.purgeSessionsForCwd(workspace.path); if (workspace.conversations.length && store.workspaces.length === 0) { /* no-op */ } await persist(); return snapshot() })
+  ipcMain.handle('narwhal:delete-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.workspaces = store.workspaces.filter((item) => item.id !== id); if (store.selectedWorkspaceId === id) { store.selectedWorkspaceId = store.workspaces[0]?.id } syncSurvivingCwds(); if (workspace.conversations.length && store.workspaces.length === 0) { /* no-op */ } await persist(); return snapshot() })
   ipcMain.handle('narwhal:create-conversation', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const now = new Date().toISOString(); const conversation: Conversation = { id: randomUUID(), workspaceId: workspace.id, title: asString(value.title, 'title', 120), goal: asString(value.goal, 'goal', 1200), status: 'active', todos: [], createdAt: now, updatedAt: now }; workspace.conversations.unshift(conversation); workspace.selectedConversationId = conversation.id; await persist(); return snapshot() })
   ipcMain.handle('narwhal:update-conversation', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const conversationId = asString(value.conversationId, 'conversationId', 100); const conversation = workspace.conversations.find((item) => item.id === conversationId); if (!conversation) throw new Error('Conversation not found'); const status = value.status; if (status !== undefined && status !== 'active' && status !== 'done') throw new Error('Invalid conversation status'); workspace.conversations = workspace.conversations.map((item) => item.id === conversationId ? { ...item, ...(value.title !== undefined && { title: asString(value.title, 'title', 120) }), ...(value.goal !== undefined && { goal: asString(value.goal, 'goal', 1200) }), ...(status !== undefined && { status: status as ConversationStatus }), updatedAt: new Date().toISOString() } : item); await persist(); return snapshot() })
   ipcMain.handle('narwhal:add-todo', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const conversationId = asString(value.conversationId, 'conversationId', 100); const conversation = workspace.conversations.find((item) => item.id === conversationId); if (!conversation) throw new Error('Conversation not found'); const todo: TodoItem = { id: randomUUID(), text: asString(value.text, 'todo text', 240), done: false }; workspace.conversations = workspace.conversations.map((item) => item.id === conversationId ? { ...item, todos: [...item.todos, todo], updatedAt: new Date().toISOString() } : item); await persist(); return snapshot() })
