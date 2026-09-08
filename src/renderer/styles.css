@@ -354,7 +354,19 @@ button { cursor: pointer; }
 .menu-check { color: var(--accent); font-size: 13px; }
 .menu-divider { height: 1px; margin: 4px 0; background: var(--border); }
 .session-live { width: 6px; height: 6px; margin-right: 2px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(112,201,150,.1); }
-.empty-side, .muted { margin: 0; color: var(--fg-muted); font-size: 12px; line-height: 1.5; }.side-foot { display: grid; gap: 12px; margin-top: auto; padding: 6px; color: var(--fg-muted); font-size: 11px; }.side-foot button { padding: 4px; color: var(--fg-secondary); }
+.empty-side, .muted { margin: 0; color: var(--fg-muted); font-size: 12px; line-height: 1.5; }.side-foot { display: grid; gap: 12px; margin-top: auto; padding: 6px; color: var(--fg-muted); font-size: 11px; }.side-foot button { padding: 4px; color: var(--fg-secondary); position: relative; }
+.settings-badge {
+  position: absolute; top: 2px; right: 2px;
+  min-width: 12px; height: 12px; padding: 0 2px;
+  border-radius: 6px;
+  background: var(--warning);
+  color: var(--bg-deepest);
+  font-size: 8px; line-height: 12px; font-weight: 700;
+  text-align: center;
+  display: inline-block;
+  box-shadow: 0 0 0 2px var(--bg-deepest);
+}
+.sidebar.is-collapsed .settings-badge { top: 0; right: 0; }
 .agent-area { position: relative; display: flex; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg-base); }
 .statusbar { position: absolute; right: 0; bottom: 0; left: 0; display: flex; align-items: center; gap: 14px; height: 32px; padding: 0 16px; border-top: 1px solid var(--border); background: var(--bg-elevated); color: var(--fg-muted); font-size: 11px; white-space: nowrap; overflow: hidden; }
 .statusbar-context { display: flex; align-items: center; min-width: 0; flex: 0 1 auto; }

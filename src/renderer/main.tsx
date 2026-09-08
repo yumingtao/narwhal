@@ -109,6 +109,8 @@ const MIN_PANEL_WIDTH = 220
 const MAX_PANEL_WIDTH = 500
 const PANEL_WIDTH_KEY = 'narwhal:panel-width'
 
+type SettingsTab = 'models' | 'providers' | 'permissions' | 'theme' | 'runtime' | 'mcp' | 'plugins' | 'skills'
+
 function App() {
   const [workbench, setWorkbench] = useState<WorkbenchSnapshot>(blank)
   const [conversation, setConversation] = useState<AgentConversation>(blankConversation)
@@ -116,9 +118,12 @@ function App() {
   const [settings, setSettings] = useState<DesktopSettings>({ appVersion: '0.1.0', runtimeVersion: 'Unavailable', dataDirectory: '' })
   const [configuration, setConfiguration] = useState<AgentConfiguration>({ available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [] } })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined)
   const [deliverableDraft, setDeliverableDraft] = useState(false)
   const [trajectoryOpen, setTrajectoryOpen] = useState(false)
   const [error, setError] = useState('')
+  const openSettings = (tab?: SettingsTab) => { setSettingsTab(tab); setSettingsOpen(true) }
+  const closeSettings = () => setSettingsOpen(false)
   const [mode, setMode] = useState<AgentMode>(() => {
     const stored = localStorage.getItem('narwhal:agent-mode') as AgentMode | null
     return stored && stored in AGENT_MODES ? stored : 'standard'
@@ -270,7 +275,13 @@ function App() {
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
         <div className="sidebar-identity" aria-label="Narwhal"><img src="./assets/narwhal-icon.png" alt=""/><div><span className="sidebar-product-name">Narwhal</span><span className="sidebar-product-subtitle">Based on DeepSeek Harness</span></div><button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}><Icon name="panel" size={17}/></button></div>
         <SideBar collapsed={sidebarCollapsed} workbench={workbench} sessions={conversation.sessions} selectedSessionId={conversation.selectedSessionId} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={(workspaceId) => void createSession(workspaceId)} selectSession={(workspaceId, sessionId) => void selectSessionForWorkspace(workspaceId, sessionId)} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
-        <div className="side-foot"><button onClick={() => setSettingsOpen(true)}><Icon name="settings"/><span>Settings</span></button></div>
+        <div className="side-foot">
+          <button onClick={() => openSettings()}>
+            <Icon name="settings"/>
+            <span>Settings</span>
+            {configuration.providers.some(p => p.active && !p.apiKeyConfigured) && <span className="settings-badge" title="One or more providers need an API key">⚠</span>}
+          </button>
+        </div>
       </aside>
       {!sidebarCollapsed && <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>}
       <section className="agent-area">
@@ -294,7 +305,7 @@ function App() {
     {workbench.panelOpen && <button className="drawer-backdrop" aria-label="Close work context" onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
     <button className={`panel-trigger${workbench.panelOpen ? ' open' : ''}`} style={workbench.panelOpen ? { right: panelWidth + 11 } : undefined} onClick={() => void mutate(() => api.setPanelOpen(!workbench.panelOpen))} aria-label="Toggle work context"><Icon name="panel"/></button>
     {deliverableDraft && <DeliverableDialog close={() => setDeliverableDraft(false)} save={(relativePath, label) => mutate(() => api.pinDeliverable({ relativePath, label })).then(() => setDeliverableDraft(false))}/>} 
-    {settingsOpen && <SettingsDialog settings={settings} agent={agent} theme={theme} setTheme={setTheme} close={() => setSettingsOpen(false)} restart={() => void api.retryAgent()}/>} 
+    {settingsOpen && <SettingsDialog settings={settings} agent={agent} theme={theme} setTheme={setTheme} close={closeSettings} restart={() => void api.retryAgent()} initialTab={settingsTab ?? 'models'}/>} 
   </main>
 }
 
@@ -792,7 +803,7 @@ function TimelineItem({ item, trajectory }: { item: ChatItem; trajectory: boolea
     </article>
   )
 }
-function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel, centered, onOpenSettings }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; centered?: boolean; onOpenSettings?: () => void }) {
+function Composer({ running, configuration, hasSession, selectModel, selectPermission, send, cancel, centered, onOpenSettings }: { running: boolean; configuration: AgentConfiguration; hasSession: boolean; selectModel: (input: { provider: string; model: string; reasoningEffort?: string }) => Promise<void>; selectPermission: (preset: string) => Promise<void>; send: (text: string, attachments?: readonly Attachment[]) => void; cancel: () => void; centered?: boolean; onOpenSettings?: (tab?: SettingsTab) => void }) {
   const [text, setText] = useState('')
   const [permMenuOpen, setPermMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
@@ -979,7 +990,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
           <div className="missing-key-body">
             <div className="missing-key-title">
               <strong>API key required</strong>
-              {onOpenSettings && <button type="button" className="btn-primary" onClick={onOpenSettings}>Configure</button>}
+              {onOpenSettings && <button type="button" className="btn-primary" onClick={() => onOpenSettings('providers')}>Configure</button>}
             </div>
             <small>{currentProvider?.name} doesn't have an API key configured yet.</small>
           </div>
@@ -1254,8 +1265,8 @@ function ChangesSection({ changes }: { changes: readonly { path: string; kind: s
 function DeliverablesSection({ entries, onNew, onReveal, onRemove }: { entries: WorkbenchSnapshot['deliverables']; onNew: () => void; onReveal: (path: string) => void; onRemove: (path: string) => void }) { return <section className="panel-section"><div className="section-title"><span>Deliverables</span><button onClick={onNew}><Icon name="plus"/></button></div>{entries.length ? <div className="deliverable-list">{entries.map((item) => <div key={item.relativePath}><button onClick={() => onReveal(item.relativePath)}><Icon name="file"/><span>{item.label}</span><small>{item.relativePath}</small></button><button className="remove" onClick={() => onRemove(item.relativePath)}><Icon name="close"/></button></div>)}</div> : <button className="quiet-add" onClick={onNew}>Pin an output file</button>}</section> }
 function DeliverableDialog({ close, save }: { close: () => void; save: (path: string, label: string) => Promise<void> }) { const [path, setPath] = useState(''); const [label, setLabel] = useState(''); return <Dialog title="Pin deliverable" close={close}><label>Relative file path<input autoFocus value={path} onChange={(event) => setPath(event.target.value)} placeholder="release/Narwhal.dmg"/></label><label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="macOS build"/></label><button className="primary" disabled={!path.trim() || !label.trim()} onClick={() => void save(path, label)}>Pin file</button></Dialog> }
 function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) { return <div className="modal" role="dialog" aria-modal="true"><form className="dialog" onSubmit={(event) => event.preventDefault()}><div><h2>{title}</h2><button className="close-dialog" onClick={close}><Icon name="close"/></button></div>{children}</form></div> }
-function SettingsDialog({ settings, agent, theme, setTheme, close, restart }: { settings: DesktopSettings; agent: AgentSnapshot; theme: ThemeMode; setTheme: (t: ThemeMode) => void; close: () => void; restart: () => void }) {
-  const [tab, setTab] = useState<'models' | 'providers' | 'permissions' | 'theme' | 'runtime' | 'mcp' | 'plugins' | 'skills'>('models')
+function SettingsDialog({ settings, agent, theme, setTheme, close, restart, initialTab }: { settings: DesktopSettings; agent: AgentSnapshot; theme: ThemeMode; setTheme: (t: ThemeMode) => void; close: () => void; restart: () => void; initialTab?: SettingsTab }) {
+  const [tab, setTab] = useState(initialTab ?? 'models')
   const [configuration, setConfiguration] = useState<AgentConfiguration>({ available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [] } })
   const [message, setMessage] = useState<{ text: string; kind: 'success' | 'error' } | null>(null)
   const load = async () => { try { setMessage(null); setConfiguration(await api.getAgentConfiguration()) } catch { setMessage({ text: 'Unable to load local Agent settings.', kind: 'error' }) } }
