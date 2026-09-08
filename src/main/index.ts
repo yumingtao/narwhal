@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { appendFile, mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -158,6 +158,19 @@ async function snapshot(): Promise<WorkbenchSnapshot> {
 }
 /** Keep HostBridge's in-memory session filter in sync with store.workspaces. */
 function syncSurvivingCwds(): void { hostBridge.setSurvivingCwds(store.workspaces.map((w) => w.path)) }
+/** Physically delete DSH runtime session data for a given workspace path.
+ *  DSH stores sessions under dsh-home/sessions/--<path-with-slashes-replaced-by-dashes>--/
+ *  e.g. /Users/foo/workspace → --Users-foo-workspace-- */
+async function deleteDshSessionsForCwd(cwd: string): Promise<void> {
+  try {
+    const slug = '--' + cwd.replace(/^\/+/u, '').replace(/\//gu, '-') + '--'
+    const sessionsDir = join(getDshHome(), 'sessions', slug)
+    await rm(sessionsDir, { recursive: true, force: true })
+    console.log('[narwhal] deleted DSH sessions dir:', sessionsDir)
+  } catch (e) {
+    console.warn('[narwhal] deleteDshSessionsForCwd failed (non-fatal):', e instanceof Error ? e.message : String(e))
+  }
+}
 function requireWorkspace(id?: string): StoredWorkspace {
   const result = (id ? store.workspaces.find((item) => item.id === id) : selected())
   if (!result) throw new Error('Choose a workspace first')
@@ -228,7 +241,7 @@ function registerIpc(): void {
   ipcMain.handle('narwhal:choose-workspace', async (event) => { sender(event); return chooseWorkspace() })
   ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })
   ipcMain.handle('narwhal:rename-workspace', async (event, raw) => { sender(event); const value = asRecord(raw); const id = asString(value.workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); const name = asString(value.name, 'workspace name', 120); if (!name) throw new Error('Workspace name is required'); workspace.name = name; await persist(); return snapshot() })
-  ipcMain.handle('narwhal:delete-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.workspaces = store.workspaces.filter((item) => item.id !== id); if (store.selectedWorkspaceId === id) { store.selectedWorkspaceId = store.workspaces[0]?.id } syncSurvivingCwds(); if (workspace.conversations.length && store.workspaces.length === 0) { /* no-op */ } await persist(); return snapshot() })
+  ipcMain.handle('narwhal:delete-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.workspaces = store.workspaces.filter((item) => item.id !== id); if (store.selectedWorkspaceId === id) { store.selectedWorkspaceId = store.workspaces[0]?.id } syncSurvivingCwds(); await deleteDshSessionsForCwd(workspace.path); if (workspace.conversations.length && store.workspaces.length === 0) { /* no-op */ } await persist(); return snapshot() })
   ipcMain.handle('narwhal:create-conversation', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const now = new Date().toISOString(); const conversation: Conversation = { id: randomUUID(), workspaceId: workspace.id, title: asString(value.title, 'title', 120), goal: asString(value.goal, 'goal', 1200), status: 'active', todos: [], createdAt: now, updatedAt: now }; workspace.conversations.unshift(conversation); workspace.selectedConversationId = conversation.id; await persist(); return snapshot() })
   ipcMain.handle('narwhal:update-conversation', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const conversationId = asString(value.conversationId, 'conversationId', 100); const conversation = workspace.conversations.find((item) => item.id === conversationId); if (!conversation) throw new Error('Conversation not found'); const status = value.status; if (status !== undefined && status !== 'active' && status !== 'done') throw new Error('Invalid conversation status'); workspace.conversations = workspace.conversations.map((item) => item.id === conversationId ? { ...item, ...(value.title !== undefined && { title: asString(value.title, 'title', 120) }), ...(value.goal !== undefined && { goal: asString(value.goal, 'goal', 1200) }), ...(status !== undefined && { status: status as ConversationStatus }), updatedAt: new Date().toISOString() } : item); await persist(); return snapshot() })
   ipcMain.handle('narwhal:add-todo', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const conversationId = asString(value.conversationId, 'conversationId', 100); const conversation = workspace.conversations.find((item) => item.id === conversationId); if (!conversation) throw new Error('Conversation not found'); const todo: TodoItem = { id: randomUUID(), text: asString(value.text, 'todo text', 240), done: false }; workspace.conversations = workspace.conversations.map((item) => item.id === conversationId ? { ...item, todos: [...item.todos, todo], updatedAt: new Date().toISOString() } : item); await persist(); return snapshot() })
