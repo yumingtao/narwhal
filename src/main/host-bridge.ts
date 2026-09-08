@@ -307,6 +307,13 @@ export class HostBridge {
     if (this.selectedSessionId && !this.sessions.some((item) => item.id === this.selectedSessionId)) this.resetSelectedSession()
     this.emit(); return this.snapshot()
   }
+  /** Remove all in-memory sessions whose cwd matches the deleted workspace path. */
+  purgeSessionsForCwd(cwd: string): void {
+    const before = this.sessions.length
+    this.sessions = this.sessions.filter((s) => s.cwd !== cwd)
+    if (this.selectedSessionId && !this.sessions.some((s) => s.id === this.selectedSessionId)) this.resetSelectedSession()
+    if (this.sessions.length !== before) this.emit()
+  }
   async createSession(cwd: string): Promise<AgentConversation> {
     const value = await this.rpc<{ sessionId?: unknown }>('session.create', { cwd })
     const id = validId(value.sessionId); if (!id) throw new Error('Local Agent returned an invalid session')
@@ -340,6 +347,14 @@ export class HostBridge {
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
     this.running = true; this.emit()
     for (const delay of [1_000, 3_000, 8_000]) setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, delay)
+    // Safety timeout: fake/unreachable providers hang forever — surface error after 60s
+    setTimeout(() => {
+      if (this.running && this.selectedSessionId === sessionId) {
+        this.running = false
+        this.pushTrajectory({ id: `timeout-${randomUUID()}`, kind: 'error', label: 'Request timed out', text: 'The Agent did not get a response within 60s. The model may be unreachable — check base URL and API key.', time: Date.now() })
+        void this.cancel().catch(() => undefined)
+      }
+    }, 60_000)
     return this.snapshot()
   }
   async cancel(): Promise<void> { if (this.selectedSessionId) { await this.rpc('session.cancel', { sessionId: this.selectedSessionId }); this.running = false; this.emit() } }
