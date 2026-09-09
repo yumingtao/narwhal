@@ -170,7 +170,16 @@ export const zh: Record<string, string> = {
   'settings.models.activeModelSub': '此选择会应用到当前对话，并成为新对话的默认值。',
   'settings.models.provider': 'Provider',
   'settings.models.model': '模型',
+  'settings.models.reasoningEffort': '推理强度',
   'settings.models.noneAvailable': '本地 Host 当前没有可用模型。',
+
+  // Create provider form 额外
+  'providers.createButton': '创建 Provider',
+  'providers.creating': '创建中…',
+  'providers.removeModel': '移除模型',
+  'providers.notAvailable': '此本地 Host 不支持自定义 Provider。',
+
+  'common.customize': '自定义',
 
   // ── 设置 → Provider ─────────────────────────────
   'settings.providers.title': 'Providers',
@@ -205,12 +214,42 @@ export const zh: Record<string, string> = {
   'settings.permissions.newConvPerm': '新对话权限',
   'settings.permissions.newConvPermSub': '此默认值仅影响新对话，不改变当前对话。',
   'settings.permissions.unavailable': '此 Host 没有可用的权限预设。',
+  'settings.permissions.fullConfirm': '完全访问可以执行不受限制的本地工具操作。确定继续吗？',
 
   // ── 设置 → Runtime ───────────────────────────────
   'settings.runtime.localAgent': '本地 Agent Runtime',
   'settings.runtime.appVersion': '应用版本',
   'settings.runtime.runtime': 'Runtime',
   'settings.runtime.workbenchData': '工作台数据',
+  'settings.runtime.restartAgent': '重启 Agent',
+  'settings.runtime.startingAgent': '正在启动 Agent…',
+  'settings.runtime.agentReady': 'Agent 就绪',
+  'settings.runtime.agentStarting': '正在启动 Agent',
+  'settings.runtime.agentNeedsRestart': 'Agent 需要重启',
+
+  // Provider row status labels
+  'settings.providers.statusAvailable': '可用',
+  'settings.providers.statusInactive': '未激活',
+  'settings.providers.statusKeyManaged': 'Key 已管理',
+  'settings.providers.statusNoKeyEditor': '无 Key 编辑器',
+  'settings.providers.statusCustomEndpoint': '自定义端点',
+  'settings.providers.modelCountNone': '无模型',
+  'settings.providers.modelCountOne': '1 个模型',
+  'settings.providers.modelCountMany': '{count} 个模型',
+  'settings.providers.creating': '创建中…',
+  'settings.providers.createProvider': '创建 Provider',
+  'settings.providers.removeModelAria': '移除模型 {index}',
+  'settings.providers.notAvailable': '此本地 Host 不支持自定义 Provider。',
+  'settings.providers.configured': '已配置',
+  'settings.providers.needsKey': '需要 Key',
+  'settings.providers.configure': '配置',
+  'settings.providers.done': '完成',
+  'settings.providers.deleteConfirm': '删除 Provider "{name}"？此操作无法撤销。',
+  'settings.providers.replaceKey': '替换已存储的 Key',
+  'settings.providers.pasteKey': '粘贴 API Key',
+  'settings.providers.baseUrlLabel': 'Base URL',
+  'settings.providers.apiKeyLabel': 'API Key',
+  'settings.providers.saving': '保存中…',
 
   // ── 集成 ────────────
   'integrations.searchPlaceholder': '搜索…',

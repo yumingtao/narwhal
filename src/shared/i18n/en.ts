@@ -175,7 +175,17 @@ export const en: Record<string, string> = {
   'settings.models.activeModelSub': 'This choice applies to the current conversation and becomes the default for new conversations.',
   'settings.models.provider': 'Provider',
   'settings.models.model': 'Model',
+  'settings.models.reasoningEffort': 'Reasoning effort',
   'settings.models.noneAvailable': 'No models are currently available from the local Host.',
+
+  // Create provider form extras
+  'providers.createButton': 'Create provider',
+  'providers.creating': 'Creating…',
+  'providers.removeModel': 'Remove model',
+  'providers.notAvailable': 'Custom providers are not available from this local Host.',
+
+  // Row actions / other misc settings
+  'common.customize': 'Customize',
 
   // ── Settings → Providers ─────────────────────────────
   'settings.providers.title': 'Providers',
@@ -210,12 +220,42 @@ export const en: Record<string, string> = {
   'settings.permissions.newConvPerm': 'New conversation permission',
   'settings.permissions.newConvPermSub': 'This default is used by new conversations. It does not alter the current conversation.',
   'settings.permissions.unavailable': 'Permission presets are unavailable from this Host.',
+  'settings.permissions.fullConfirm': 'Full access can allow unrestricted local tool operations. Continue?',
 
   // ── Settings → Runtime ───────────────────────────────
   'settings.runtime.localAgent': 'Local Agent runtime',
   'settings.runtime.appVersion': 'App version',
   'settings.runtime.runtime': 'Runtime',
   'settings.runtime.workbenchData': 'Workbench data',
+  'settings.runtime.restartAgent': 'Restart Agent',
+  'settings.runtime.startingAgent': 'Starting Agent…',
+  'settings.runtime.agentReady': 'Agent ready',
+  'settings.runtime.agentStarting': 'Starting agent',
+  'settings.runtime.agentNeedsRestart': 'Agent needs restart',
+
+  // Provider row status labels
+  'settings.providers.statusAvailable': 'Available',
+  'settings.providers.statusInactive': 'Inactive',
+  'settings.providers.statusKeyManaged': 'Key managed',
+  'settings.providers.statusNoKeyEditor': 'No key editor',
+  'settings.providers.statusCustomEndpoint': 'Custom endpoint',
+  'settings.providers.modelCountNone': 'No models',
+  'settings.providers.modelCountOne': '1 model',
+  'settings.providers.modelCountMany': '{count} models',
+  'settings.providers.creating': 'Creating…',
+  'settings.providers.createProvider': 'Create provider',
+  'settings.providers.removeModelAria': 'Remove model {index}',
+  'settings.providers.notAvailable': 'Custom providers are not available from this local Host.',
+  'settings.providers.configured': 'Configured',
+  'settings.providers.needsKey': 'Needs key',
+  'settings.providers.configure': 'Configure',
+  'settings.providers.done': 'Done',
+  'settings.providers.deleteConfirm': 'Delete provider "{name}"? This action cannot be undone.',
+  'settings.providers.replaceKey': 'Replace stored key',
+  'settings.providers.pasteKey': 'Paste API key',
+  'settings.providers.baseUrlLabel': 'Base URL',
+  'settings.providers.apiKeyLabel': 'API key',
+  'settings.providers.saving': 'Saving…',
 
   // ── Integrations (MCP / Plugins / Skills) ────────────
   'integrations.searchPlaceholder': 'Search…',
