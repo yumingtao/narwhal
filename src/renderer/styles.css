@@ -3,6 +3,8 @@
    ========================================================= */
 
 :root, [data-theme="dark"] {
+  color-scheme: dark;
+
   /* Backgrounds */
   --bg-base: #121416;
   --bg-elevated: #181c1e;
@@ -52,6 +54,8 @@
 }
 
 [data-theme="light"] {
+  color-scheme: light;
+
   /* Backgrounds */
   --bg-base: #ffffff;
   --bg-elevated: #f6f8fa;
@@ -102,6 +106,7 @@
 
 @media (prefers-color-scheme: light) {
   [data-theme="auto"] {
+    color-scheme: light;
     /* Backgrounds */
     --bg-base: #ffffff;
     --bg-elevated: #f6f8fa;
@@ -908,8 +913,39 @@ button { cursor: pointer; }
 .theme-options { display: grid; gap: 8px; }
 .settings-group { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
 .settings-group label.settings-label { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-secondary); }
-.settings-select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-input); color: var(--fg-primary); font-size: 13px; cursor: pointer; appearance: none; }
-.settings-select option { background: var(--bg-card); color: var(--fg-primary); }
+
+/* ── Unified dark-theme native <select> — all select elements in settings dialog ── */
+.settings-dialog select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-color: var(--bg-input);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23c7cfcc' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+  color: var(--fg-primary);
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  min-height: 32px;
+}
+.settings-dialog select:focus { border-color: var(--accent); outline: 0; }
+.settings-dialog select option {
+  background-color: var(--bg-card);
+  color: var(--fg-primary);
+  padding: 6px 10px;
+}
+/* macOS Safari/Chromium native <select> popup — uses system color, override with system-dark hint */
+@media (prefers-color-scheme: dark) {
+  .settings-dialog select option { background-color: var(--bg-card); color: var(--fg-primary); }
+}
+/* Light theme option refinement */
+[data-theme="light"] .settings-dialog select option {
+  background-color: var(--bg-card);
+  color: var(--fg-primary);
+}
 .theme-option {
   display: flex; align-items: center; gap: 12px;
   padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px;
