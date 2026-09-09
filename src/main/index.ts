@@ -4,7 +4,7 @@ import { appendFile, mkdir, readFile, realpath, rename, rm, writeFile } from 'no
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, protocol, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, shell, Tray } from 'electron'
 import type { AgentConfiguration, AgentConversation, AgentSnapshot, Conversation, ConversationStatus, CreateProviderResult, Deliverable, DesktopSettings, GitChange, TodoItem, WorkbenchSnapshot, Workspace, McpServer, McpServerCard, BundlePluginCard, InstalledPlugin, SkillCard, InstallResult } from '../shared/desktop-contract.js'
 import { createHostSupervisor, type HostGeneration } from './host-supervisor.js'
 import { HostBridge } from './host-bridge.js'
@@ -263,6 +263,13 @@ function registerIpc(): void {
   ipcMain.handle('narwhal:bootstrap', async (event) => { sender(event); return { agent, workbench: await snapshot(), settings: desktopSettings(), config: getConfig(), configLoadError: getLoadError() } })
   ipcMain.handle('narwhal:get-config', async (event) => { sender(event); return getConfig() })
   ipcMain.handle('narwhal:save-config', async (event, raw) => { sender(event); const value = asRecord(raw); return saveConfig(value as any) })
+  ipcMain.handle('narwhal:set-native-theme', async (event, raw) => {
+    sender(event)
+    const value = asRecord(raw)
+    const source = asString(value.source, 'themeSource', 20) as 'system' | 'light' | 'dark'
+    nativeTheme.themeSource = source
+    return { applied: source }
+  })
   ipcMain.handle('narwhal:get-config-path', async (event) => { sender(event); return getConfigPath() })
   ipcMain.handle('narwhal:choose-workspace', async (event) => { sender(event); return chooseWorkspace() })
   ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })

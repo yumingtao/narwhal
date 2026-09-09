@@ -930,6 +930,16 @@ button { cursor: pointer; }
   cursor: pointer;
   font-size: 13px;
   min-height: 32px;
+  /* Override .settings-page select { width: 100% } so labels don't get squeezed */
+  width: auto;
+  flex: 0 0 auto;
+}
+/* But selects inside grid labels still take full column width */
+.settings-page > label select,
+.model-controls select,
+.provider-fields select {
+  width: 100%;
+  flex: 1 1 auto;
 }
 .settings-dialog select:focus { border-color: var(--accent); outline: 0; }
 .settings-dialog select option {

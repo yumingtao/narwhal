@@ -39,6 +39,7 @@ const bridge: NarwhalBridge = Object.freeze({
   getConfig: () => invoke<NarwhalConfig>('narwhal:get-config'),
   saveConfig: (patch: Partial<NarwhalConfig>) => invoke<NarwhalConfig>('narwhal:save-config', patch),
   getConfigPath: () => invoke<string>('narwhal:get-config-path'),
+  setNativeTheme: (source: 'system' | 'light' | 'dark') => invoke<{ applied: string }>('narwhal:set-native-theme', { source }),
   // --- Integrations ---
   searchMcpServers: (query: string, limit?: number) => invoke<readonly McpServerCard[]>('narwhal:search-mcp-servers', { query, limit }),
   listInstalledMcpServers: () => invoke<readonly McpServer[]>('narwhal:list-installed-mcp-servers'),

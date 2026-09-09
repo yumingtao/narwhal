@@ -139,6 +139,7 @@ export interface NarwhalBridge {
   getConfig(): Promise<NarwhalConfig>
   saveConfig(patch: Partial<NarwhalConfig>): Promise<NarwhalConfig>
   getConfigPath(): Promise<string>
+  setNativeTheme(source: 'system' | 'light' | 'dark'): Promise<{ readonly applied: string }>
   // --- Integrations ---
   searchMcpServers(query: string, limit?: number): Promise<readonly McpServerCard[]>
   listInstalledMcpServers(): Promise<readonly McpServer[]>

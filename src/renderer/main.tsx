@@ -8,7 +8,7 @@ import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github-dark.css'
 import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ChatItem, Command, Conversation, DesktopSettings, NarwhalConfig, ThemeMode, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
-import { detectLang, getLang, setLang, t, subscribe, type Lang } from '../shared/i18n'
+import { detectLang, getLang, setLang as setI18nLang, t, subscribe, type Lang } from '../shared/i18n'
 import { classifyTrajectory } from '../shared/trajectory-classifier'
 import { buildTrajectoryData } from './trajectory/builder'
 import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar'
@@ -190,7 +190,7 @@ function App() {
         setConfig(bootstrapConfig)
         setTheme(bootstrapConfig.theme)
         const resolved = detectLang(bootstrapConfig.language)
-        setLang(resolved)
+        setI18nLang(resolved)
         setLangState(resolved)
       }
     }).catch(() => setError('Narwhal could not load its local workspace data.'))
@@ -216,11 +216,11 @@ function App() {
   useEffect(() => { localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)) }, [sidebarWidth])
   useEffect(() => { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(sidebarCollapsed)) }, [sidebarCollapsed])
   useEffect(() => { localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth)) }, [panelWidth])
-  // Apply theme to document element
+  // Apply theme to document element + native macOS theme (for select popup etc.)
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     localStorage.setItem('narwhal:theme', theme)
-    console.log('[narwhal-renderer] theme applied:', theme, '→ data-theme=', document.documentElement.dataset.theme)
+    void api.setNativeTheme(theme)
   }, [theme])
   // Listen to system preference changes when theme is "auto"
   useEffect(() => {
@@ -1316,7 +1316,7 @@ function ThemeSettings({ theme, setTheme, lang, setLang }: { theme: ThemeMode; s
     { id: 'zh', label: t('settings.language.zh') },
   ]
   const handleLangChange = async (l: Lang) => {
-    setLang(l)
+    setI18nLang(l)
     void api.saveConfig({ language: l }).catch(() => undefined)
   }
   return <section className="settings-page theme-settings">
