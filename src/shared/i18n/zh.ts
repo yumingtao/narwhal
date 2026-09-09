@@ -1,7 +1,11 @@
 // 中文字符串 — 与 en.ts 一一对应，同一个 key。
 
 export const zh: Record<string, string> = {
-  // ── 工作台 ──────────────────────────────────────
+  // ── 品牌 ─────────────────────────────────
+  'brand.subtitle': '基于 DeepSeek Harness',
+  'brand.name': 'Narwhal',
+
+  // ── 工作台 / 侧栏 ──────────────────────────────
   'workspace.title': '工作区',
   'workspace.new': '新建工作区',
   'workspace.newFolder': '新建文件夹',
@@ -9,70 +13,206 @@ export const zh: Record<string, string> = {
   'workspace.deleteConfirm': '确定删除工作区 "{name}"？该工作区下的所有会话也会被删除，且无法恢复。',
   'workspace.empty': '未打开工作区',
   'workspace.emptyHint': '创建或打开本地文件夹，开始与 Agent 对话。',
+  'workspace.open': '打开工作区',
+  'workspace.addDots': '添加工作区…',
+  'workspace.options': '工作区选项',
+  'workspace.groupBy': '分组方式',
+  'workspace.orderBy': '排序方式',
+  'workspace.folderEmpty': '打开本地文件夹开始。',
+  'workspace.subagentManage': '管理子 Agent',
+  'workspace.subagentCreateDots': '创建子 Agent…',
 
   // ── 会话 ────────────────────────────────────────
   'session.new': '新建会话',
+  'session.newCap': '新建会话',
   'session.delete': '删除会话',
   'session.deleteConfirm': '确定删除会话 "{name}"？',
   'session.rename': '重命名会话',
-  'session.empty': '未选中会话',
-  'session.emptyHint': '新建会话或从侧边栏选择一个。',
+  'session.empty': '还没有会话。',
+  'session.loadMore': '加载更多',
 
   // ── 聊天 / 输入 ────────────────────────────────
   'chat.send': '发送',
+  'chat.sendAria': '发送消息',
   'chat.inputPlaceholder': '告诉 Narwhal 你想做什么…',
   'chat.stop': '停止',
+  'chat.stopAria': '停止生成',
   'chat.attach': '添加附件',
+  'chat.attachTitle': '添加附件',
   'chat.empty': '开始对话',
   'chat.emptyHint': '选择工作区和会话，然后描述你的需求。',
   'chat.generating': 'Narwhal 正在思考…',
+  'chat.writing': '书写中',
+  'chat.commands': '命令',
+  'chat.commandsAria': '斜杠命令',
+  'chat.apiKeyRequired': '需要 API Key',
+  'chat.apiKeyConfigure': '配置',
+
+  // ── 聊天控制 ────────────────────────────────────
+  'chat.convTitleAria': '会话标题',
+  'chat.convGoalAria': '会话目标',
+  'chat.addStepAria': '添加步骤',
+  'chat.addStepPlaceholder': '添加步骤',
+  'chat.plan': '计划',
+  'chat.markComplete': '标记会话完成',
+  'chat.noSteps': '还没有步骤。',
+  'chat.createFirst': '创建第一个会话',
+
+  // ── 聊天控制（下拉/弹出） ─────────────
+  'chat.permissionTitle': '设置默认会话权限',
+  'chat.permissionAria': '会话权限',
+  'chat.switchProviderTitle': '切换 Provider 和模型',
+  'chat.modelSelectionAria': '模型选择',
+  'chat.modelUnavailable': '模型不可用',
+  'chat.reasoningEffortTitle': '调整推理强度',
+  'chat.reasoningEffortAria': '推理强度',
+
+  // ── 空状态 / 欢迎页 ───────────────────────────
+  'welcome.localWorkspace': '你的本地工作区',
+  'welcome.localWorkspaceSub': '给 Agent 一个工作的地方。',
+  'welcome.localWorkspaceHint': '打开项目文件夹，Narwhal 会把对话和产出都保存在这台 Mac 上，与代码分离。',
+  'welcome.readyWhenYouAre': '随时开始',
+  'welcome.startLocal': '开始本地对话。',
+  'welcome.startLocalHint': 'Narwhal 会为此工作区创建一个 Agent 会话。工作上下文始终留在本应用中。',
+  'welcome.newConversation': '新建对话',
+  'welcome.localAgent': '本地 Agent',
+  'welcome.restartAgent': '重启 Agent',
+
+  // ── 变更文件 / 交付物 ────────────────────
+  'chat.changedFiles': '变更文件',
+  'chat.noLocalChanges': '未检测到本地变更。',
+  'chat.deliverables': '交付物',
+  'chat.pinOutputFile': '固定一个输出文件',
+  'chat.pinPath': '相对文件路径',
+  'chat.pinPathPlaceholder': 'release/Narwhal.dmg',
+  'chat.pinLabel': '标签',
+  'chat.pinLabelPlaceholder': 'macOS 构建',
+  'chat.pinFile': '固定文件',
+  'chat.pinDeliverableTitle': '固定交付物',
+
+  // ── 轨迹 ──────────────────────────────────────
+  'trajectory.tabChat': '聊天',
+  'trajectory.tabTrajectory': '轨迹',
+  'trajectory.empty': '轨迹将在这里显示。',
+  'trajectory.emptyHint': 'Agent 执行事件（turn、工具调用、上下文更新）会实时显示在这里。',
+
+  // ── 工作上下文面板 ───────────────────────────────
+  'context.title': '工作上下文',
+  'context.hint': '选择一个工作区，让它的计划、变更文件和交付物归到一起。',
+  'context.closePanel': '关闭面板',
+  'context.closeAria': '关闭工作上下文',
+  'context.toggleAria': '切换工作上下文',
+
+  // ── 状态栏 / 指标 ──────────────────────────────
+  'status.metricsAria': '运行指标',
+  'status.turns': 'turns',
+  'status.llm': 'LLM',
+  'status.ttftAvg': '首 token 延迟',
+  'status.tokPerSec': 'tok/s',
+  'status.cacheHit': '缓存命中',
+  'status.input': '输入',
+  'status.output': '输出',
+  'status.ready': '就绪',
+  'status.starting': '启动中…',
+  'status.error': '错误',
+  'status.stopped': '已停止',
 
   // ── 错误 ─────────────────────────────────────────
   'agent.needsAttention': 'Agent 需要关注',
-  'agent.connectionError': '连接错误。请检查 provider 的 Base URL 是否可达，API Key 是否有效。',
+  'agent.connectionError': '连接错误。请检查 Provider 的 Base URL 是否可达，API Key 是否有效。',
   'agent.error': '错误',
   'agent.retry': '重试',
+  'agent.providersNeedKey': '有 Provider 还需要设置 API Key',
 
-  // ── 设置 ───────────────────────────────────────
+  // ── 其他 ─────────────────────────────────────
+  'misc.dragToResize': '拖动调整大小 · 双击重置',
+  'misc.dismiss': '关闭',
+  'misc.searchAria': '搜索',
+  'misc.filterAria': '筛选',
+  'misc.filterSortTitle': '筛选 / 排序',
+
+  // ── 设置 ──────────────────────────────
   'settings.title': '设置',
+  'settings.localWorkbench': '本地工作台',
   'settings.close': '关闭设置',
+  'settings.closeAria': '关闭设置',
+  'settings.sectionsAria': '设置分类',
   'settings.language': '语言',
   'settings.language.auto': '跟随系统',
   'settings.language.en': 'English',
   'settings.language.zh': '简体中文',
+
   'settings.theme': '外观',
+  'settings.theme.intro': '选择 Narwhal 在屏幕上的显示方式。',
   'settings.theme.title': '主题',
-  'settings.theme.auto': '跟随系统',
-  'settings.theme.light': '浅色',
+  'settings.theme.sub': '选择适合你的配色方案。',
+  'settings.theme.auto': '自动',
+  'settings.theme.autoDesc': '跟随系统外观',
   'settings.theme.dark': '深色',
+  'settings.theme.darkDesc': '始终使用深色主题',
+  'settings.theme.light': '浅色',
+  'settings.theme.lightDesc': '始终使用浅色主题',
+
   'settings.tab.models': '模型',
-  'settings.tab.providers': 'Provider',
+  'settings.tab.providers': 'Providers',
   'settings.tab.permissions': '权限',
-  'settings.tab.runtime': '运行时',
   'settings.tab.mcp': 'MCP Servers',
   'settings.tab.plugins': '运行时扩展',
   'settings.tab.skills': 'Skills',
+  'settings.tab.runtime': 'Runtime',
 
-  // ── Provider ───────────────────────────────────────
-  'providers.title': 'Provider',
-  'providers.add': '添加 Provider',
-  'providers.name': '显示名称',
-  'providers.id': 'Provider ID',
-  'providers.baseUrl': 'Base URL',
-  'providers.apiKey': 'API Key',
-  'providers.apiKeyMissing': '未设置 API Key',
-  'providers.apiKeySet': 'API Key 已配置',
-  'providers.apiKeyPlaceholder': '粘贴 API Key…',
-  'providers.save': '保存更改',
-  'providers.deleting': '删除中…',
-  'providers.delete': '删除',
-  'providers.deleteConfirm': '确定删除 Provider "{name}"？此操作无法撤销。',
-  'providers.active': '已启用',
-  'providers.inactive': '未启用',
-  'providers.models': '模型',
-  'providers.protocol': '协议',
+  'settings.group.agent': 'Agent',
+  'settings.group.integrations': '集成',
+  'settings.group.system': '系统',
 
-  // ── 集成市场 ───────────────────────────────────
+  // ── 设置 → 模型 ────────────────────────────────
+  'settings.models.activeModel': '当前模型',
+  'settings.models.activeModelSub': '此选择会应用到当前对话，并成为新对话的默认值。',
+  'settings.models.provider': 'Provider',
+  'settings.models.model': '模型',
+  'settings.models.noneAvailable': '本地 Host 当前没有可用模型。',
+
+  // ── 设置 → Provider ─────────────────────────────
+  'settings.providers.title': 'Providers',
+  'settings.providers.wroteOnly': '凭据为只写。请从本地 Host schema 添加兼容路由。',
+  'settings.providers.add': '添加 Provider',
+  'settings.providers.noneAvailable': '本地 Agent 没有可配置的 Provider。',
+  'settings.providers.newCustom': '新建自定义 Provider',
+  'settings.providers.closeFormAria': '关闭 Provider 表单',
+  'settings.providers.newCustomHint': 'Profile 和模型一起创建。API Key 可选。',
+  'settings.providers.providerId': 'Provider ID',
+  'settings.providers.providerIdPlaceholder': 'my-provider',
+  'settings.providers.providerIdImmutable': 'Provider ID 创建后不可更改。',
+  'settings.providers.displayName': '显示名称（可选）',
+  'settings.providers.displayNamePlaceholder': 'My Provider',
+  'settings.providers.baseUrl': 'Base URL',
+  'settings.providers.baseUrlPlaceholder': 'https://api.example.com/v1',
+  'settings.providers.baseUrlFallbackPlaceholder': 'https://api.example.com',
+  'settings.providers.apiProtocol': 'API 协议',
+  'settings.providers.modelIds': '模型 ID（至少填一个）',
+  'settings.providers.modelPlaceholder': '例如 my-model-v1',
+  'settings.providers.addAnotherModel': '+ 添加另一个模型',
+  'settings.providers.addModel': '+ 添加模型',
+  'settings.providers.apiKeyOptional': 'API Key（可选）',
+  'settings.providers.apiKeyPlaceholder': 'Profile 创建后只写保存',
+  'settings.providers.selectModel': '选择模型',
+  'settings.providers.delete': '删除',
+  'settings.providers.deleteTitle': '删除 Provider',
+  'settings.providers.saveKey': '保存 Key',
+  'settings.providers.saveChanges': '保存更改',
+
+  // ── 设置 → 权限 ───────────────────────────
+  'settings.permissions.newConvPerm': '新对话权限',
+  'settings.permissions.newConvPermSub': '此默认值仅影响新对话，不改变当前对话。',
+  'settings.permissions.unavailable': '此 Host 没有可用的权限预设。',
+
+  // ── 设置 → Runtime ───────────────────────────────
+  'settings.runtime.localAgent': '本地 Agent Runtime',
+  'settings.runtime.appVersion': '应用版本',
+  'settings.runtime.runtime': 'Runtime',
+  'settings.runtime.workbenchData': '工作台数据',
+
+  // ── 集成 ────────────
   'integrations.searchPlaceholder': '搜索…',
   'integrations.install': '安装',
   'integrations.installed': '已安装',
@@ -81,13 +221,7 @@ export const zh: Record<string, string> = {
   'integrations.refresh': '刷新',
   'integrations.empty': '没有结果',
 
-  // ── 状态栏 ──────────────────────────────────────
-  'status.ready': '就绪',
-  'status.starting': '启动中…',
-  'status.error': '错误',
-  'status.stopped': '已停止',
-
-  // ── 通用 ──────────────────────────
+  // ── 通用 ────────────────────────────────────────
   'common.cancel': '取消',
   'common.confirm': '确定',
   'common.save': '保存',

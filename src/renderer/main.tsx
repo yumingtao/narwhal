@@ -94,7 +94,7 @@ const markdownComponents: Components = {
     const language = /language-([\w-]+)/u.exec(className ?? '')?.[1]
     const text = String(children).replace(/\n$/u, '')
     if (!language) return <code className={className} {...props}>{children}</code>
-    return <div className="code-block"><div><span>{language}</span><button type="button" aria-label="Copy code" onClick={() => void navigator.clipboard.writeText(text).catch(() => undefined)}>Copy</button></div><pre><code className={className} {...props}>{children}</code></pre></div>
+    return <div className="code-block"><div><span>{language}</span><button type="button" aria-label="Copy code" onClick={() => void navigator.clipboard.writeText(text).catch(() => undefined)}>{t('common.copy')}</button></div><pre><code className={className} {...props}>{children}</code></pre></div>
   },
 }
 export function MarkdownMessage({ content }: { content: string }) { return <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={markdownComponents}>{content}</ReactMarkdown> }
@@ -283,17 +283,17 @@ function App() {
     <header className="titlebar"><div className="drag-space" aria-hidden="true"/><button className={`agent-status ${agent.state} no-drag`} onClick={() => agent.state !== 'ready' && void api.retryAgent()}><i/>{statusText(agent.state)}</button></header>
     <section className={`layout${workbench.panelOpen ? ' panel-open' : ''}${sidebarCollapsed ? ' sidebar-collapsed' : ''}`} style={layoutStyle}>
       <aside className={`sidebar${sidebarCollapsed ? ' is-collapsed' : ''}`}>
-        <div className="sidebar-identity" aria-label="Narwhal"><img src="./assets/narwhal-icon.png" alt=""/><div><span className="sidebar-product-name">Narwhal</span><span className="sidebar-product-subtitle">Based on DeepSeek Harness</span></div><button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}><Icon name="panel" size={17}/></button></div>
+        <div className="sidebar-identity" aria-label={t('brand.name')}><img src="./assets/narwhal-icon.png" alt=""/><div><span className="sidebar-product-name">{t('brand.name')}</span><span className="sidebar-product-subtitle">{t('brand.subtitle')}</span></div><button className="sidebar-toggle" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={sidebarCollapsed} title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}><Icon name="panel" size={17}/></button></div>
         <SideBar collapsed={sidebarCollapsed} workbench={workbench} sessions={conversation.sessions} selectedSessionId={conversation.selectedSessionId} choose={() => void mutate(() => api.chooseWorkspace())} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} createSession={(workspaceId) => void createSession(workspaceId)} selectSession={(workspaceId, sessionId) => void selectSessionForWorkspace(workspaceId, sessionId)} renameWorkspace={(id, name) => void mutate(() => api.renameWorkspace({ workspaceId: id, name }))} deleteWorkspace={(id) => void mutate(() => api.deleteWorkspace(id))}/>
         <div className="side-foot">
           <button onClick={() => openSettings()}>
             <Icon name="settings"/>
-            <span>Settings</span>
-            {configuration.providers.some(p => p.active && !p.apiKeyConfigured) && <span className="settings-badge" title="One or more providers need an API key">⚠</span>}
+            <span>{t('settings.title')}</span>
+            {configuration.providers.some(p => p.active && !p.apiKeyConfigured) && <span className="settings-badge" title={t('agent.providersNeedKey')}>⚠</span>}
           </button>
         </div>
       </aside>
-      {!sidebarCollapsed && <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title="Drag to resize · Double-click to reset"/>}
+      {!sidebarCollapsed && <div className="sidebar-resizer" onMouseDown={onSidebarResizeStart} onDoubleClick={onSidebarDoubleClick} title={t('misc.dragToResize')}/>}
       <section className="agent-area">
         {error && <div className="notice"><span>{error}</span><button onClick={() => setError('')}>Dismiss</button></div>}
         {!workspace ? <EmptyWorkspace open={() => void mutate(api.chooseWorkspace)}/> : agent.state !== 'ready' ? <AgentLoading state={agent.state} retry={() => void api.retryAgent()}/> : !conversation.selectedSessionId ? <EmptyConversation create={() => void agentCall(api.createSession)}/> : <NativeConversation conversation={conversation} configuration={configuration} selectModel={selectModel} selectPermission={selectPermission} trajectoryOpen={trajectoryOpen} setTrajectoryOpen={setTrajectoryOpen} send={(text, attachments) => agentCall(() => api.sendPrompt(text, attachments))} cancel={() => void api.cancelPrompt().catch(() => setError('The Agent could not stop this turn.'))} workbench={workbench} selectWorkspace={(id) => void mutate(() => api.selectWorkspace(id))} chooseWorkspace={() => void mutate(() => api.chooseWorkspace())} mode={mode} setMode={setMode} conversationTitle={selectedConversation?.title ?? ''} onOpenSettings={openSettings}/>} 
@@ -302,18 +302,18 @@ function App() {
             <span className="statusbar-workspace" title={workspace?.displayPath ?? workspace?.name}><Icon name="folder"/>{workspace?.name ?? 'No workspace'}</span>
             <span className={`statusbar-git${workbench.git.branch ? '' : ' unavailable'}`} title={workbench.git.branch ? `${workbench.git.branch} · ${gitSummary}` : 'No Git repository'}><Icon name="branch"/>{workbench.git.branch ?? 'No Git repository'}{workbench.git.branch && <small>{gitSummary}</small>}</span>
           </div>
-          <div className="statusbar-metrics-scroll" aria-label="Run metrics">
+          <div className="statusbar-metrics-scroll" aria-label={t('status.metricsAria')}>
             <span className="usage-metrics">
-              <strong>{statusMetrics.turns}</strong> turns<em/>{statusMetrics.steps} steps<em/>LLM <strong>{formatOptionalLatency(statusMetrics.llmLatency)}</strong><em/>TTFT avg <strong>{formatOptionalLatency(statusMetrics.ttftAvg)}</strong><em/><strong>{statusMetrics.tokenThroughput ?? '—'}</strong> tok/s<em/>Cache hit <strong>{statusMetrics.cacheHitRate === undefined ? '—' : `${statusMetrics.cacheHitRate}%`}</strong><em/>Input <strong>{formatOptionalTokens(statusMetrics.inputTokens)} tok</strong><em/>Output <strong>{formatOptionalTokens(statusMetrics.outputTokens)} tok</strong>
+              <strong>{statusMetrics.turns}</strong> {t('status.turns')}<em/>{statusMetrics.steps} steps<em/>{t('status.llm')} <strong>{formatOptionalLatency(statusMetrics.llmLatency)}</strong><em/>{t('status.ttftAvg')} <strong>{formatOptionalLatency(statusMetrics.ttftAvg)}</strong><em/><strong>{statusMetrics.tokenThroughput ?? '—'}</strong> {t('status.tokPerSec')}<em/>{t('status.cacheHit')} <strong>{statusMetrics.cacheHitRate === undefined ? '—' : `${statusMetrics.cacheHitRate}%`}</strong><em/>{t('status.input')} <strong>{formatOptionalTokens(statusMetrics.inputTokens)} tok</strong><em/>{t('status.output')} <strong>{formatOptionalTokens(statusMetrics.outputTokens)} tok</strong>
             </span>
           </div>
         </footer>
       </section>
-      {workbench.panelOpen && <div className="panel-resizer" onMouseDown={onPanelResizeStart} onDoubleClick={onPanelDoubleClick} title="Drag to resize · Double-click to reset"/>} 
-      {workbench.panelOpen && <aside className="context-panel open" style={{ width: panelWidth }}><div className="panel-head"><div><p>Work context</p><h2>{selectedConversation?.title ?? 'No conversation selected'}</h2></div><button title="Close panel" onClick={() => void mutate(() => api.setPanelOpen(false))}><Icon name="close"/></button></div>{!workspace ? <p className="panel-empty">Choose a workspace to keep its plan, changed files and deliverables together.</p> : <><ConversationSection conversation={selectedConversation} onSelect={(conversationId) => void mutate(() => api.selectConversation(conversationId))} onNew={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} onUpdate={(input) => void mutate(() => api.updateConversation(input))} onTodo={(conversationId, todoId, done) => void mutate(() => api.toggleTodo({ conversationId, todoId, done }))} onAddTodo={(conversationId, text) => void mutate(() => api.addTodo({ conversationId, text }))}/><ChangesSection changes={workbench.git.changes}/><DeliverablesSection entries={workbench.deliverables} onNew={() => setDeliverableDraft(true)} onReveal={(path) => void api.revealDeliverable(path)} onRemove={(path) => void mutate(() => api.unpinDeliverable(path))}/></>}</aside>}
+      {workbench.panelOpen && <div className="panel-resizer" onMouseDown={onPanelResizeStart} onDoubleClick={onPanelDoubleClick} title={t('misc.dragToResize')}/>} 
+      {workbench.panelOpen && <aside className="context-panel open" style={{ width: panelWidth }}><div className="panel-head"><div><p>Work context</p><h2>{selectedConversation?.title ?? 'No conversation selected'}</h2></div><button title={t('context.closePanel')} onClick={() => void mutate(() => api.setPanelOpen(false))}><Icon name="close"/></button></div>{!workspace ? <p className="panel-empty">Choose a workspace to keep its plan, changed files and deliverables together.</p> : <><ConversationSection conversation={selectedConversation} onSelect={(conversationId) => void mutate(() => api.selectConversation(conversationId))} onNew={() => void mutate(() => api.createConversation({ title: 'New conversation', goal: '' }))} onUpdate={(input) => void mutate(() => api.updateConversation(input))} onTodo={(conversationId, todoId, done) => void mutate(() => api.toggleTodo({ conversationId, todoId, done }))} onAddTodo={(conversationId, text) => void mutate(() => api.addTodo({ conversationId, text }))}/><ChangesSection changes={workbench.git.changes}/><DeliverablesSection entries={workbench.deliverables} onNew={() => setDeliverableDraft(true)} onReveal={(path) => void api.revealDeliverable(path)} onRemove={(path) => void mutate(() => api.unpinDeliverable(path))}/></>}</aside>}
     </section>
-    {workbench.panelOpen && <button className="drawer-backdrop" aria-label="Close work context" onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
-    <button className={`panel-trigger${workbench.panelOpen ? ' open' : ''}`} style={workbench.panelOpen ? { right: panelWidth + 11 } : undefined} onClick={() => void mutate(() => api.setPanelOpen(!workbench.panelOpen))} aria-label="Toggle work context"><Icon name="panel"/></button>
+    {workbench.panelOpen && <button className="drawer-backdrop" aria-label={t('context.closeAria')} onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
+    <button className={`panel-trigger${workbench.panelOpen ? ' open' : ''}`} style={workbench.panelOpen ? { right: panelWidth + 11 } : undefined} onClick={() => void mutate(() => api.setPanelOpen(!workbench.panelOpen))} aria-label={t('context.toggleAria')}><Icon name="panel"/></button>
     {deliverableDraft && <DeliverableDialog close={() => setDeliverableDraft(false)} save={(relativePath, label) => mutate(() => api.pinDeliverable({ relativePath, label })).then(() => setDeliverableDraft(false))}/>} 
     {settingsOpen && <SettingsDialog settings={settings} agent={agent} theme={theme} setTheme={setTheme} lang={lang} setLang={setLangState} close={closeSettings} restart={() => void api.retryAgent()} initialTab={settingsTab ?? 'models'}/>} 
   </main>
@@ -353,7 +353,7 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
               >{initial}</button>
             )
           })}
-          <button className="collapsed-ws-avatar collapsed-ws-add" title="New workspace" aria-label="New workspace" onClick={choose}>
+          <button className="collapsed-ws-avatar collapsed-ws-add" title={t('workspace.new')} aria-label={t('workspace.new')} onClick={choose}>
             <Icon name="folder-plus" size={14}/>
           </button>
         </div>
@@ -383,7 +383,7 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
       <div className="menu-overlay" onClick={() => { setFilterMenuOpen(false) }}/>
       <div className="menu-popup" onClick={(e) => e.stopPropagation()}>
         <div className="menu-section">
-          <div className="menu-section-title">Group by</div>
+          <div className="menu-section-title">{t('workspace.groupBy')}</div>
           <button className={`menu-item${groupBy === 'workspace' ? ' active' : ''}`} onClick={() => { setGroupBy('workspace'); setFilterMenuOpen(false) }}>
             WorkSpace {groupBy === 'workspace' && <span className="menu-check">✓</span>}
           </button>
@@ -393,7 +393,7 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
         </div>
         <div className="menu-divider"/>
         <div className="menu-section">
-          <div className="menu-section-title">Order by</div>
+          <div className="menu-section-title">{t('workspace.orderBy')}</div>
           <button className={`menu-item${orderBy === 'manual' ? ' active' : ''}`} onClick={() => { setOrderBy('manual'); setFilterMenuOpen(false) }}>
             Manual {orderBy === 'manual' && <span className="menu-check">✓</span>}
           </button>
@@ -411,9 +411,9 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
       <div className="section-heading filter-heading">
         <span>{groupBy === 'flat' ? 'Sessions' : 'Workspaces'}</span>
         <div className="section-heading-actions">
-          <button className="heading-icon" aria-label="Search" title="Search"><Icon name="search"/></button>
-          <button className={`heading-icon${filterMenuOpen ? ' active' : ''}`} aria-label="Filter" title="Filter / Sort" onClick={() => setFilterMenuOpen(!filterMenuOpen)}><Icon name="sliders"/></button>
-          <button className="heading-icon" aria-label="New workspace" title="New workspace" onClick={choose}><Icon name="folder-plus"/></button>
+          <button className="heading-icon" aria-label={t('misc.searchAria')} title={t('misc.searchAria')}><Icon name="search"/></button>
+          <button className={`heading-icon${filterMenuOpen ? ' active' : ''}`} aria-label={t('misc.filterAria')} title={t('misc.filterSortTitle')} onClick={() => setFilterMenuOpen(!filterMenuOpen)}><Icon name="sliders"/></button>
+          <button className="heading-icon" aria-label={t('workspace.new')} title={t('workspace.new')} onClick={choose}><Icon name="folder-plus"/></button>
         </div>
         <FilterMenu/>
       </div>
@@ -456,16 +456,16 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
                   <div className="workspace-row-actions" onClick={(e) => e.stopPropagation()}>
                     <button
                       className={`heading-icon workspace-action-btn${isMenuOpen ? ' active' : ''}`}
-                      aria-label="Workspace options"
-                      title="Workspace options"
+                      aria-label={t('workspace.options')}
+                      title={t('workspace.options')}
                       onClick={() => setWorkspaceMenuOpen(isMenuOpen ? null : item.id)}
                     >
                       <Icon name="more" size={14}/>
                     </button>
                     <button
                       className="heading-icon workspace-action-btn"
-                      aria-label="New session"
-                      title="New session"
+                      aria-label={t('session.new')}
+                      title={t('session.new')}
                       onClick={() => createSession(item.id)}
                     >
                       <Icon name="plus" size={14}/>
@@ -498,7 +498,7 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
                         <span className="session-title">{conv.title}</span>
                         <small>{formatRelativeTime(conv.updatedAt)}</small>
                       </button>
-                    )) : <p className="empty-side">No sessions yet.</p>}
+                    )) : <p className="empty-side">{t('session.empty')}</p>}
                     {hasMore && (
                       <button className="load-more" onClick={(e) => { e.stopPropagation(); loadMore(item.id) }}>
                         Load more ({allConvs.length - visibleCount})
@@ -516,7 +516,7 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
                   if (workbench.selectedWorkspaceId) createSession(workbench.selectedWorkspaceId)
                 }}>
                   <Icon name="plus" size={16}/>
-                  <span>New Session</span>
+                  <span>{t('session.newCap')}</span>
                 </button>
               </div>
               {sortSessions(sessions).slice(0, CONVERSATIONS_PER_PAGE).map((conv) => {
@@ -534,11 +534,11 @@ function SideBar({ collapsed, workbench, sessions, selectedSessionId, choose, se
                 )
               })}
               {sessions.length > CONVERSATIONS_PER_PAGE && (
-                <button className="load-more">Load more</button>
+                <button className="load-more">{t('session.loadMore')}</button>
               )}
             </>
           )
-        ) : <p className="empty-side">Open a local folder to begin.</p>}
+        ) : <p className="empty-side">{t('workspace.folderEmpty')}</p>}
       </div>
     </div>
   </>
@@ -585,7 +585,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
         {trajectoryData.turns.length ? (
           <TrajectoryTable turns={trajectoryData.turns} selectedIndex={selectedRecord} onSelect={setSelectedRecord} searchQuery={searchQuery}/>
         ) : (
-          <div className="trajectory-empty"><img src="./assets/narwhal-icon.png"/><h2>Trajectory will appear here.</h2><p>Agent execution events — turns, tool calls, context updates — appear here as they happen.</p></div>
+          <div className="trajectory-empty"><img src="./assets/narwhal-icon.png"/><h2>{t('trajectory.empty')}</h2><p>{t('trajectory.emptyHint')}</p></div>
         )}
       </div>
       {selectedRecordData && <TrajectoryInspector record={selectedRecordData} onClose={() => setSelectedRecord(null)}/>}
@@ -630,7 +630,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
                     <div className="menu-section">
                       <button className="menu-item" onClick={() => { setWorkspaceMenuOpen(false); chooseWorkspace() }}>
                         <span className="selector-item-icon"><Icon name="plus" size={14}/></span>
-                        <span className="selector-item-label">Add workspace…</span>
+                        <span className="selector-item-label">{t('workspace.addDots')}</span>
                       </button>
                     </div>
                   </div>
@@ -675,7 +675,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
               <button
                 className="selector-pill"
                 onClick={() => { setSubagentsMenuOpen(!subagentsMenuOpen); setWorkspaceMenuOpen(false); setModeMenuOpen(false) }}
-                title="Manage subagents"
+                title={t('workspace.subagentManage')}
               >
                 <Icon name="robot" size={14}/>
                 <span className="selector-pill-label">{subagentsCount} subagent{subagentsCount !== 1 ? 's' : ''}</span>
@@ -695,7 +695,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
                     <div className="menu-section">
                       <button className="menu-item" onClick={() => setSubagentsMenuOpen(false)}>
                         <span className="selector-item-icon"><Icon name="plus" size={14}/></span>
-                        <span className="selector-item-label">Create subagent…</span>
+                        <span className="selector-item-label">{t('workspace.subagentCreateDots')}</span>
                       </button>
                     </div>
                   </div>
@@ -705,8 +705,8 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
           </div>
         </div>
         <div className="segmented">
-          <button className={!trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(false)}>Chat</button>
-          <button className={trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(true)}>Trajectory</button>
+          <button className={!trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(false)}>{t('trajectory.tabChat')}</button>
+          <button className={trajectoryOpen ? 'active' : ''} onClick={() => setTrajectoryOpen(true)}>{t('trajectory.tabTrajectory')}</button>
         </div>
       </div>
       {trajectoryOpen ? (
@@ -716,7 +716,7 @@ function NativeConversation({ conversation, configuration, selectModel, selectPe
       ) : isEmptyChat ? (
         <div className="empty-chat-container">
           <div className="empty-chat-header">
-            <img src="./assets/narwhal-icon.png" alt="Narwhal" className="empty-chat-icon"/>
+            <img src="./assets/narwhal-icon.png" alt={t('brand.name')} className="empty-chat-icon"/>
           </div>
           <Composer
             running={conversation.running}
@@ -999,7 +999,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
           <Icon name="error" size={14}/>
           <div className="missing-key-body">
             <div className="missing-key-title">
-              <strong>API key required</strong>
+              <strong>{t('chat.apiKeyRequired')}</strong>
               {onOpenSettings && <button type="button" className="btn-primary" onClick={() => onOpenSettings('providers')}>Configure</button>}
             </div>
             <small>{currentProvider?.name} doesn't have an API key configured yet.</small>
@@ -1075,8 +1075,8 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
         }}
       />
       {commandOpen && filteredCommands.length > 0 && (
-        <div className="command-popup" role="listbox" aria-label="Slash commands">
-          <div className="command-popup-title">Commands</div>
+        <div className="command-popup" role="listbox" aria-label={t('chat.commandsAria')}>
+          <div className="command-popup-title">{t('chat.commands')}</div>
           {filteredCommands.map((cmd, idx) => (
             <button
               type="button"
@@ -1098,8 +1098,8 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
           <button
             type="button"
             className="composer-add-btn"
-            title="Add attachment"
-            aria-label="Add attachment"
+            title={t('chat.attach')}
+            aria-label={t('chat.attach')}
             disabled={running}
             onClick={() => fileInput.current?.click()}
           >
@@ -1113,7 +1113,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
               className="selector-pill composer-permission-pill"
               disabled={!configuration.available || running || !configuration.permissionOptions.length}
               onClick={() => { setPermMenuOpen(!permMenuOpen); setModelMenuOpen(false) }}
-              title="Set default conversation permission"
+              title={t('chat.permissionTitle')}
               aria-haspopup="menu"
               aria-expanded={permMenuOpen}
               aria-controls="composer-permission-menu"
@@ -1125,7 +1125,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
             {permMenuOpen && configuration.available && configuration.permissionOptions.length > 0 && (
               <>
                 <div className="menu-overlay" onClick={() => setPermMenuOpen(false)}/>
-                <div id="composer-permission-menu" className="menu-popup selector-menu" role="menu" aria-label="Conversation permission" onClick={(e) => e.stopPropagation()}>
+                <div id="composer-permission-menu" className="menu-popup selector-menu" role="menu" aria-label={t('chat.permissionAria')} onClick={(e) => e.stopPropagation()}>
                   <div className="menu-section">
                     {configuration.permissionOptions.map((option) => (
                       <button
@@ -1154,7 +1154,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                 className="selector-pill composer-model-pill"
                 disabled={modelPickerDisabled}
                 onClick={() => { setModelMenuOpen(!modelMenuOpen); setPermMenuOpen(false) }}
-                title="Switch provider and model"
+                title={t('chat.switchProviderTitle')}
                 aria-haspopup="menu"
                 aria-expanded={modelMenuOpen}
                 aria-controls="composer-model-menu"
@@ -1165,7 +1165,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
               {modelMenuOpen && (
                 <>
                   <div className="menu-overlay" onClick={() => setModelMenuOpen(false)}/>
-                  <div id="composer-model-menu" className="menu-popup selector-menu model-selector-menu" role="menu" aria-label="Model selection" onClick={(e) => e.stopPropagation()}>
+                  <div id="composer-model-menu" className="menu-popup selector-menu model-selector-menu" role="menu" aria-label={t('chat.modelSelectionAria')} onClick={(e) => e.stopPropagation()}>
                     <div className="menu-section">
                       {groups.map((group) => (
                         <div key={group.id} className="model-provider-group">
@@ -1196,7 +1196,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
               )}
             </div>
           ) : configuration.available ? (
-            <span className="composer-model-empty">Model unavailable</span>
+            <span className="composer-model-empty">{t('chat.modelUnavailable')}</span>
           ) : null}
           {/* Effort selector pill - shown when model has multiple efforts (native or fallback) */}
           {configuration.available && model && model.efforts.length > 1 && (
@@ -1207,7 +1207,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                 className="selector-pill composer-effort-pill"
                 disabled={modelPickerDisabled}
                 onClick={() => { setEffortMenuOpen(!effortMenuOpen); setModelMenuOpen(false); setPermMenuOpen(false) }}
-                title="Adjust reasoning effort"
+                title={t('chat.reasoningEffortTitle')}
                 aria-haspopup="menu"
                 aria-expanded={effortMenuOpen}
                 aria-controls="composer-effort-menu"
@@ -1218,7 +1218,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
               {effortMenuOpen && (
                 <>
                   <div className="menu-overlay" onClick={() => setEffortMenuOpen(false)}/>
-                  <div id="composer-effort-menu" className="menu-popup selector-menu" role="menu" aria-label="Reasoning effort" onClick={(e) => e.stopPropagation()}>
+                  <div id="composer-effort-menu" className="menu-popup selector-menu" role="menu" aria-label={t('chat.reasoningEffortAria')} onClick={(e) => e.stopPropagation()}>
                     <div className="menu-section">
                       {model.efforts.map((eff) => (
                         <button
@@ -1250,13 +1250,13 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
         </div>
         <div className="composer-bar-right">
           {running ? (
-            <button type="button" className="cancel-turn" onClick={cancel} aria-label="Stop generation"><Icon name="stop" size={16}/></button>
+            <button type="button" className="cancel-turn" onClick={cancel} aria-label={t('chat.stopAria')}><Icon name="stop" size={16}/></button>
           ) : (
             <button
               type="submit"
               className="send"
               disabled={(!text.trim() && attachments.length === 0) || !hasSession || needsApiKey}
-              aria-label="Send message"
+              aria-label={t('chat.sendAria')}
             >
               <Icon name="arrow"/>
             </button>
@@ -1270,10 +1270,10 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
 function EmptyWorkspace({ open }: { open: () => void }) { return <div className="empty-state"><img src="./assets/narwhal-icon.png"/><p className="eyebrow">Your local workspace</p><h1>Give your agent a place to work.</h1><p>Open a project folder. Narwhal keeps conversations and deliverables on this Mac, separate from your code.</p><button className="primary" onClick={open}><Icon name="folder-plus"/>Open workspace</button></div> }
 function EmptyConversation({ create }: { create: () => void }) { return <div className="empty-state"><img src="./assets/narwhal-icon.png"/><p className="eyebrow">Ready when you are</p><h1>Start a local conversation.</h1><p>Narwhal will create an Agent session for this workspace. Your work context stays in this app.</p><button className="primary" onClick={create}><Icon name="plus"/>New conversation</button></div> }
 function AgentLoading({ state, retry }: { state: AgentSnapshot['state']; retry: () => void }) { return <div className="empty-state loading"><div className="pulse-orb"/><p className="eyebrow">Local agent</p><h1>{state === 'needs-restart' ? 'The agent needs a restart.' : 'Preparing your local agent.'}</h1><p>{state === 'needs-restart' ? 'Your workspace is safe. Restart the local agent to continue.' : 'Starting the tools, skills, and session runtime on this Mac.'}</p>{state === 'needs-restart' && <button className="primary" onClick={retry}>Restart agent</button>}</div> }
-function ConversationSection({ conversation, onSelect, onNew, onUpdate, onTodo, onAddTodo }: { conversation?: Conversation; onSelect: (id: string) => void; onNew: () => void; onUpdate: (input: { conversationId: string; title?: string; goal?: string; status?: 'active' | 'done' }) => void; onTodo: (conversationId: string, todoId: string, done: boolean) => void; onAddTodo: (conversationId: string, text: string) => void }) { const [editing, setEditing] = useState(false); const [step, setStep] = useState(''); const complete = conversation?.todos.filter((item) => item.done).length ?? 0; const total = conversation?.todos.length ?? 0; useEffect(() => setEditing(false), [conversation?.id]); if (!conversation) return <section className="panel-section"><div className="section-title"><span>Plan</span><button onClick={onNew}><Icon name="plus"/></button></div><button className="quiet-add" onClick={onNew}>Create the first conversation</button></section>; return <section className="panel-section"><div className="section-title"><span>Plan</span><span><button title="Edit conversation" onClick={() => setEditing(!editing)}><Icon name="settings"/></button><button onClick={onNew}><Icon name="plus"/></button></span></div>{editing ? <div className="task-edit"><input defaultValue={conversation.title} aria-label="Conversation title" onBlur={(event) => event.target.value.trim() && onUpdate({ conversationId: conversation.id, title: event.target.value })}/><textarea defaultValue={conversation.goal} aria-label="Conversation goal" onBlur={(event) => event.target.value.trim() && onUpdate({ conversationId: conversation.id, goal: event.target.value })}/><label><input type="checkbox" checked={conversation.status === 'done'} onChange={(event) => onUpdate({ conversationId: conversation.id, status: event.target.checked ? 'done' : 'active' })}/>Mark conversation complete</label></div> : <button className="task-choice" onClick={() => onSelect(conversation.id)}>{conversation.goal}</button>}<div className="progress"><span style={{ width: `${total ? complete / total * 100 : 0}%` }}/></div><small>{complete}/{total} steps complete</small><div className="todos">{conversation.todos.length ? conversation.todos.map((todo) => <label key={todo.id}><input type="checkbox" checked={todo.done} onChange={(event) => onTodo(conversation.id, todo.id, event.target.checked)}/><span>{todo.text}</span></label>) : <p className="muted">No steps yet.</p>}<form className="add-step" onSubmit={(event) => { event.preventDefault(); if (step.trim()) { onAddTodo(conversation.id, step); setStep('') } }}><input value={step} onChange={(event) => setStep(event.target.value)} placeholder="Add a step"/><button aria-label="Add step"><Icon name="plus"/></button></form></div></section> }
+function ConversationSection({ conversation, onSelect, onNew, onUpdate, onTodo, onAddTodo }: { conversation?: Conversation; onSelect: (id: string) => void; onNew: () => void; onUpdate: (input: { conversationId: string; title?: string; goal?: string; status?: 'active' | 'done' }) => void; onTodo: (conversationId: string, todoId: string, done: boolean) => void; onAddTodo: (conversationId: string, text: string) => void }) { const [editing, setEditing] = useState(false); const [step, setStep] = useState(''); const complete = conversation?.todos.filter((item) => item.done).length ?? 0; const total = conversation?.todos.length ?? 0; useEffect(() => setEditing(false), [conversation?.id]); if (!conversation) return <section className="panel-section"><div className="section-title"><span>Plan</span><button onClick={onNew}><Icon name="plus"/></button></div><button className="quiet-add" onClick={onNew}>Create the first conversation</button></section>; return <section className="panel-section"><div className="section-title"><span>Plan</span><span><button title="Edit conversation" onClick={() => setEditing(!editing)}><Icon name="settings"/></button><button onClick={onNew}><Icon name="plus"/></button></span></div>{editing ? <div className="task-edit"><input defaultValue={conversation.title} aria-label={t('chat.convTitleAria')} onBlur={(event) => event.target.value.trim() && onUpdate({ conversationId: conversation.id, title: event.target.value })}/><textarea defaultValue={conversation.goal} aria-label={t('chat.convGoalAria')} onBlur={(event) => event.target.value.trim() && onUpdate({ conversationId: conversation.id, goal: event.target.value })}/><label><input type="checkbox" checked={conversation.status === 'done'} onChange={(event) => onUpdate({ conversationId: conversation.id, status: event.target.checked ? 'done' : 'active' })}/>Mark conversation complete</label></div> : <button className="task-choice" onClick={() => onSelect(conversation.id)}>{conversation.goal}</button>}<div className="progress"><span style={{ width: `${total ? complete / total * 100 : 0}%` }}/></div><small>{complete}/{total} steps complete</small><div className="todos">{conversation.todos.length ? conversation.todos.map((todo) => <label key={todo.id}><input type="checkbox" checked={todo.done} onChange={(event) => onTodo(conversation.id, todo.id, event.target.checked)}/><span>{todo.text}</span></label>) : <p className="muted">No steps yet.</p>}<form className="add-step" onSubmit={(event) => { event.preventDefault(); if (step.trim()) { onAddTodo(conversation.id, step); setStep('') } }}><input value={step} onChange={(event) => setStep(event.target.value)} placeholder={t('chat.addStepPlaceholder')}/><button aria-label={t('chat.addStepAria')}><Icon name="plus"/></button></form></div></section> }
 function ChangesSection({ changes }: { changes: readonly { path: string; kind: string }[] }) { return <section className="panel-section"><div className="section-title"><span>Changed files</span><small>{changes.length}</small></div>{changes.length ? <div className="file-list">{changes.slice(0, 7).map((change) => <div key={`${change.kind}-${change.path}`}><code>{change.kind}</code><span title={change.path}>{change.path}</span></div>)}</div> : <p className="muted">No local changes detected.</p>}</section> }
 function DeliverablesSection({ entries, onNew, onReveal, onRemove }: { entries: WorkbenchSnapshot['deliverables']; onNew: () => void; onReveal: (path: string) => void; onRemove: (path: string) => void }) { return <section className="panel-section"><div className="section-title"><span>Deliverables</span><button onClick={onNew}><Icon name="plus"/></button></div>{entries.length ? <div className="deliverable-list">{entries.map((item) => <div key={item.relativePath}><button onClick={() => onReveal(item.relativePath)}><Icon name="file"/><span>{item.label}</span><small>{item.relativePath}</small></button><button className="remove" onClick={() => onRemove(item.relativePath)}><Icon name="close"/></button></div>)}</div> : <button className="quiet-add" onClick={onNew}>Pin an output file</button>}</section> }
-function DeliverableDialog({ close, save }: { close: () => void; save: (path: string, label: string) => Promise<void> }) { const [path, setPath] = useState(''); const [label, setLabel] = useState(''); return <Dialog title="Pin deliverable" close={close}><label>Relative file path<input autoFocus value={path} onChange={(event) => setPath(event.target.value)} placeholder="release/Narwhal.dmg"/></label><label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="macOS build"/></label><button className="primary" disabled={!path.trim() || !label.trim()} onClick={() => void save(path, label)}>Pin file</button></Dialog> }
+function DeliverableDialog({ close, save }: { close: () => void; save: (path: string, label: string) => Promise<void> }) { const [path, setPath] = useState(''); const [label, setLabel] = useState(''); return <Dialog title={t('chat.pinDeliverableTitle')} close={close}><label>Relative file path<input autoFocus value={path} onChange={(event) => setPath(event.target.value)} placeholder={t('chat.pinPathPlaceholder')}/></label><label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder={t('chat.pinLabelPlaceholder')}/></label><button className="primary" disabled={!path.trim() || !label.trim()} onClick={() => void save(path, label)}>Pin file</button></Dialog> }
 function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) { return <div className="modal" role="dialog" aria-modal="true"><form className="dialog" onSubmit={(event) => event.preventDefault()}><div><h2>{title}</h2><button className="close-dialog" onClick={close}><Icon name="close"/></button></div>{children}</form></div> }
 function SettingsDialog({ settings, agent, theme, setTheme, lang, setLang, close, restart, initialTab }: { settings: DesktopSettings; agent: AgentSnapshot; theme: ThemeMode; setTheme: (t: ThemeMode) => void; lang: Lang; setLang: (l: Lang) => void; close: () => void; restart: () => void; initialTab?: SettingsTab }) {
   const [tab, setTab] = useState(initialTab ?? 'models')
@@ -1285,14 +1285,14 @@ function SettingsDialog({ settings, agent, theme, setTheme, lang, setLang, close
   const update = async (operation: () => Promise<AgentConfiguration>, notice = 'Saved locally.') => { try { setMessage(null); setConfiguration(await operation()); if (notice) setMessage({ text: notice, kind: 'success' }) } catch { setMessage({ text: 'The local Agent rejected that setting. Nothing was changed.', kind: 'error' }) } }
   const createProvider = async (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => { try { setMessage(null); const result = await api.createProvider(input); setConfiguration(result.configuration); setMessage({ text: result.keyStored ? 'Provider created locally.' : 'Provider was created, but the API key was rejected. Add the key from its provider row.', kind: 'success' }); return true } catch (error) { setMessage({ text: error instanceof Error ? error.message : 'The local Agent rejected this provider. Nothing was created.', kind: 'error' }); return false } }
   const navigation: ReadonlyArray<{ readonly id: typeof tab; readonly label: string; readonly icon: IconName; readonly group: string }> = [
-    { id: 'models', label: 'Models', icon: 'model', group: 'Agent' },
-    { id: 'providers', label: 'Providers', icon: 'provider', group: 'Agent' },
-    { id: 'permissions', label: 'Permissions', icon: 'shield', group: 'Agent' },
-    { id: 'mcp', label: 'MCP Servers', icon: 'provider', group: 'Integrations' },
-    { id: 'plugins', label: 'Runtime Extensions', icon: 'model', group: 'Integrations' },
-    { id: 'skills', label: 'Skills', icon: 'file', group: 'Integrations' },
-    { id: 'theme', label: 'Appearance', icon: 'sliders', group: 'System' },
-    { id: 'runtime', label: 'Runtime', icon: 'runtime', group: 'System' },
+    { id: 'models', label: t('settings.tab.models'), icon: 'model', group: t('settings.group.agent') },
+    { id: 'providers', label: t('settings.tab.providers'), icon: 'provider', group: t('settings.group.agent') },
+    { id: 'permissions', label: t('settings.tab.permissions'), icon: 'shield', group: t('settings.group.agent') },
+    { id: 'mcp', label: t('settings.tab.mcp'), icon: 'provider', group: t('settings.group.integrations') },
+    { id: 'plugins', label: t('settings.tab.plugins'), icon: 'model', group: t('settings.group.integrations') },
+    { id: 'skills', label: t('settings.tab.skills'), icon: 'file', group: t('settings.group.integrations') },
+    { id: 'theme', label: t('settings.theme'), icon: 'sliders', group: t('settings.group.system') },
+    { id: 'runtime', label: t('settings.tab.runtime'), icon: 'runtime', group: t('settings.group.system') },
   ]
   const groupedNavigation = navigation.reduce<Record<string, typeof navigation>>((acc, item) => {
     const g = item.group
@@ -1300,27 +1300,27 @@ function SettingsDialog({ settings, agent, theme, setTheme, lang, setLang, close
     acc[g] = [...acc[g], item]
     return acc
   }, {})
-  const groupOrder = ['Agent', 'Integrations', 'System']
+  const groupOrder = [t('settings.group.agent'), t('settings.group.integrations'), t('settings.group.system')]
   const selectTab = (next: typeof tab) => { setTab(next); document.getElementById(`settings-tab-${next}`)?.focus() }
   const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => { const index = navigation.findIndex((item) => item.id === tab); const key = event.key; const nextIndex = key === 'ArrowDown' || key === 'ArrowRight' ? (index + 1) % navigation.length : key === 'ArrowUp' || key === 'ArrowLeft' ? (index - 1 + navigation.length) % navigation.length : key === 'Home' ? 0 : key === 'End' ? navigation.length - 1 : undefined; if (nextIndex === undefined) return; event.preventDefault(); selectTab(navigation[nextIndex].id) }
-  return <div className="modal" role="dialog" aria-modal="true" aria-label="Settings"><section className="settings-dialog"><header className="settings-head"><div><p>Local workbench</p><h2>Settings</h2></div><button className="close-dialog" aria-label="Close settings" onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label="Settings sections" role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className={`settings-notice ${message.kind}`} role="status">{message.text}</p>}{!configuration.available && tab !== 'runtime' && tab !== 'theme' && tab !== 'mcp' && tab !== 'plugins' && tab !== 'skills' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={() => selectTab('models')}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : tab === 'mcp' ? <McpServersTab/> : tab === 'plugins' ? <PluginsTab/> : tab === 'skills' ? <SkillsTab/> : tab === 'theme' ? <ThemeSettings theme={theme} setTheme={setTheme} lang={lang} setLang={setLang}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
+  return <div className="modal" role="dialog" aria-modal="true" aria-label={t('settings.title')}><section className="settings-dialog"><header className="settings-head"><div><p>{t('settings.localWorkbench')}</p><h2>{t('settings.title')}</h2></div><button className="close-dialog" aria-label={t('settings.close')} onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label={t('settings.sectionsAria')} role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className={`settings-notice ${message.kind}`} role="status">{message.text}</p>}{!configuration.available && tab !== 'runtime' && tab !== 'theme' && tab !== 'mcp' && tab !== 'plugins' && tab !== 'skills' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={() => selectTab('models')}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : tab === 'mcp' ? <McpServersTab/> : tab === 'plugins' ? <PluginsTab/> : tab === 'skills' ? <SkillsTab/> : tab === 'theme' ? <ThemeSettings theme={theme} setTheme={setTheme} lang={lang} setLang={setLang}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
 }
 function ThemeSettings({ theme, setTheme, lang, setLang }: { theme: ThemeMode; setTheme: (t: ThemeMode) => void; lang: Lang; setLang: (l: Lang) => void }) {
   const themeOptions: ReadonlyArray<{ readonly id: ThemeMode; readonly label: string; readonly description: string }> = [
-    { id: 'auto', label: 'Auto', description: 'Follow your system appearance' },
-    { id: 'dark', label: 'Dark', description: 'Always use dark theme' },
-    { id: 'light', label: 'Light', description: 'Always use light theme' },
+    { id: 'auto', label: t('settings.theme.auto'), description: t('settings.theme.autoDesc') },
+    { id: 'dark', label: t('settings.theme.dark'), description: t('settings.theme.darkDesc') },
+    { id: 'light', label: t('settings.theme.light'), description: t('settings.theme.lightDesc') },
   ]
   const languageOptions: ReadonlyArray<{ readonly id: Lang; readonly label: string }> = [
-    { id: 'en', label: 'English' },
-    { id: 'zh', label: '简体中文' },
+    { id: 'en', label: t('settings.language.en') },
+    { id: 'zh', label: t('settings.language.zh') },
   ]
   const handleLangChange = async (l: Lang) => {
     setLang(l)
     void api.saveConfig({ language: l }).catch(() => undefined)
   }
   return <section className="settings-page theme-settings">
-    <div className="settings-page-intro"><p>Appearance</p><small>Choose how Narwhal looks on your screen.</small></div>
+    <div className="settings-page-intro"><p>{t('settings.theme')}</p><small>{t('settings.theme.intro')}</small></div>
     <div className="settings-group">
       <label className="settings-label">Language
         <select value={lang} onChange={(e) => handleLangChange(e.target.value as Lang)} className="settings-select">
@@ -1328,7 +1328,7 @@ function ThemeSettings({ theme, setTheme, lang, setLang }: { theme: ThemeMode; s
         </select>
       </label>
     </div>
-    <div className="settings-page-intro"><p>Theme</p><small>Pick a color scheme that works for you.</small></div>
+    <div className="settings-page-intro"><p>{t('settings.theme.title')}</p><small>{t('settings.theme.sub')}</small></div>
     <div className="theme-options">
       {themeOptions.map((opt) => (
         <label key={opt.id} className={`theme-option${theme === opt.id ? ' active' : ''}`}>
@@ -1354,7 +1354,7 @@ function CreateProviderForm({ protocols, close, submit }: { protocols: readonly 
   const updateModelId = (index: number, value: string) => setModelIds((prev) => prev.map((m, i) => (i === index ? value : m)))
   const validModelIds = modelIds.map((m) => m.trim()).filter(Boolean)
   const ready = id.trim() && baseUrl.trim() && protocol && validModelIds.length > 0
-  return <form className="provider-create" onSubmit={(event) => { event.preventDefault(); if (!ready || saving) return; setSaving(true); void submit({ id: id.trim(), ...(displayName.trim() && { displayName: displayName.trim() }), baseUrl: baseUrl.trim(), protocol, modelIds: validModelIds, ...(apiKey.trim() && { apiKey: apiKey.trim() }) }).then((created) => { if (created) { setApiKey(''); setModelIds(['']) } setSaving(false) }) }}><header className="provider-create-title"><div><strong>New custom provider</strong><small>Profile and model are created together. API key is optional.</small></div><button type="button" className="close-provider-create" aria-label="Close provider form" title="Close provider form" onClick={close}><Icon name="close"/></button></header><div className="provider-fields"><label>Provider ID<input value={id} onChange={(event) => setId(event.target.value)} placeholder="my-provider" autoCapitalize="none" autoCorrect="off"/></label><label>Display name (optional)<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="My Provider"/></label><label className="provider-wide">Base URL<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" inputMode="url"/></label><label>API protocol<select value={protocol} onChange={(event) => setProtocol(event.target.value)}>{protocols.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><label className="provider-wide">Model IDs (at least one required)<div className="model-ids-list">{modelIds.map((modelId, index) => <div key={index} className="model-id-row"><input value={modelId} onChange={(event) => updateModelId(index, event.target.value)} placeholder="e.g. my-model-v1" autoCapitalize="none" autoCorrect="off"/>{modelIds.length > 1 && <button type="button" className="remove-model" onClick={() => removeModelId(index)} aria-label={`Remove model ${index + 1}`}>×</button>}</div>)}</div><button type="button" className="add-model-btn" onClick={addModelId} disabled={modelIds.filter((m) => m.trim()).length === 0 && modelIds.length > 1}>+ Add another model</button></label><label className="provider-wide">API key (optional)<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="Stored write-only after the profile is created"/></label></div><div className="provider-create-actions"><span>Provider ID cannot be changed after creation.</span><button type="submit" className="primary" disabled={!ready || saving}>{saving ? 'Creating…' : 'Create provider'}</button></div></form>
+  return <form className="provider-create" onSubmit={(event) => { event.preventDefault(); if (!ready || saving) return; setSaving(true); void submit({ id: id.trim(), ...(displayName.trim() && { displayName: displayName.trim() }), baseUrl: baseUrl.trim(), protocol, modelIds: validModelIds, ...(apiKey.trim() && { apiKey: apiKey.trim() }) }).then((created) => { if (created) { setApiKey(''); setModelIds(['']) } setSaving(false) }) }}><header className="provider-create-title"><div><strong>{t('settings.providers.newCustom')}</strong><small>{t('settings.providers.newCustomHint')}</small></div><button type="button" className="close-provider-create" aria-label={t('settings.providers.closeFormAria')} title={t('settings.providers.closeFormAria')} onClick={close}><Icon name="close"/></button></header><div className="provider-fields"><label>{t('settings.providers.providerId')}<input value={id} onChange={(event) => setId(event.target.value)} placeholder={t('settings.providers.providerIdPlaceholder')} autoCapitalize="none" autoCorrect="off"/></label><label>{t('settings.providers.displayName')}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={t('settings.providers.displayNamePlaceholder')}/></label><label className="provider-wide">{t('settings.providers.baseUrl')}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} inputMode="url"/></label><label>{t('settings.providers.apiProtocol')}<select value={protocol} onChange={(event) => setProtocol(event.target.value)}>{protocols.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><label className="provider-wide">{t('settings.providers.modelIds')}<div className="model-ids-list">{modelIds.map((modelId, index) => <div key={index} className="model-id-row"><input value={modelId} onChange={(event) => updateModelId(index, event.target.value)} placeholder={t('settings.providers.modelPlaceholder')} autoCapitalize="none" autoCorrect="off"/>{modelIds.length > 1 && <button type="button" className="remove-model" onClick={() => removeModelId(index)} aria-label={`Remove model ${index + 1}`}>×</button>}</div>)}</div><button type="button" className="add-model-btn" onClick={addModelId} disabled={modelIds.filter((m) => m.trim()).length === 0 && modelIds.length > 1}>{t('settings.providers.addAnotherModel')}</button></label><label className="provider-wide">{t('settings.providers.apiKeyOptional')}<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t('settings.providers.apiKeyPlaceholder')}/></label></div><div className="provider-create-actions"><span>{t('settings.providers.providerIdImmutable')}</span><button type="submit" className="primary" disabled={!ready || saving}>{saving ? 'Creating…' : 'Create provider'}</button></div></form>
 }
 function ProviderRow({ provider, update, models, openModels, onDelete }: { provider: AgentConfiguration['providers'][number]; update: (operation: () => Promise<AgentConfiguration>) => void; models: readonly AgentConfiguration['models'][number]['models'][number][]; openModels: () => void; onDelete: () => void }) {
   const [expanded, setExpanded] = useState(false)
@@ -1408,32 +1408,32 @@ function ProviderRow({ provider, update, models, openModels, onDelete }: { provi
           {provider.apiKeyConfigured ? 'Configured' : 'Needs key'}
         </span>
         <span className="provider-row-model-count">{modelLabel}</span>
-        <button type="button" className="provider-row-btn" onClick={openModels} disabled={!modelCount}>Select model</button>
+        <button type="button" className="provider-row-btn" onClick={openModels} disabled={!modelCount}>{t('settings.providers.selectModel')}</button>
         {hasConfig && <button type="button" className="provider-row-btn configure" onClick={() => setExpanded(!expanded)}>{expanded ? 'Done' : 'Configure'}</button>}
-        <button type="button" className="provider-row-btn delete" onClick={() => { if (window.confirm(`Delete provider "${provider.name}"? This action cannot be undone.`)) onDelete() }} title="Delete provider" aria-label={`Delete ${provider.name}`}>Delete</button>
+        <button type="button" className="provider-row-btn delete" onClick={() => { if (window.confirm(`Delete provider "${provider.name}"? This action cannot be undone.`)) onDelete() }} title={t('settings.providers.deleteTitle')} aria-label={`Delete ${provider.name}`}>{t('settings.providers.delete')}</button>
       </div>
     </header>
     {expanded && <div className="provider-row-config">
       <label>Base URL
         <div className="field-action">
-          <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com"/>
+          <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t('settings.providers.baseUrlFallbackPlaceholder')}/>
         </div>
       </label>
       <label>Models (at least one required)
         <div className="model-ids-list">
           {modelIds.map((modelId, index) => (
             <div key={index} className="model-id-row">
-              <input value={modelId} onChange={(event) => updateModelId(index, event.target.value)} placeholder="e.g. my-model-v1" autoCapitalize="none" autoCorrect="off"/>
+              <input value={modelId} onChange={(event) => updateModelId(index, event.target.value)} placeholder={t('settings.providers.modelPlaceholder')} autoCapitalize="none" autoCorrect="off"/>
               {modelIds.length > 1 && <button type="button" className="remove-model" onClick={() => removeModelId(index)} aria-label={`Remove model ${index + 1}`}>×</button>}
             </div>
           ))}
         </div>
-        <button type="button" className="add-model-btn" onClick={addModelId}>+ Add model</button>
+        <button type="button" className="add-model-btn" onClick={addModelId}>{t('settings.providers.addModel')}</button>
       </label>
       {provider.apiKeyWritable && <label>API key
         <div className="field-action">
           <input type="password" autoComplete="off" value={key} onChange={(event) => setKey(event.target.value)} placeholder={provider.apiKeyConfigured ? 'Replace stored key' : 'Paste API key'}/>
-          <button type="button" onClick={() => { update(() => api.setProviderApiKey({ provider: provider.id, value: key })); setKey('') }} disabled={!key.trim()}>Save key</button>
+          <button type="button" onClick={() => { update(() => api.setProviderApiKey({ provider: provider.id, value: key })); setKey('') }} disabled={!key.trim()}>{t('settings.providers.saveKey')}</button>
         </div>
       </label>}
       <div className="config-actions">
