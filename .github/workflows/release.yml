@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build-macos-arm64:
-    name: Build macOS (arm64)
+  build-and-release:
+    name: Build & Release macOS (arm64)
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -85,32 +85,12 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           ls -lh release/*.dmg
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: narwhal-mac-arm64
-          path: |
-            release/*.zip
-            release/*.dmg
-          if-no-files-found: error
-
-  release:
-    name: Create GitHub Release
-    needs: build-macos-arm64
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: narwhal-mac-arm64
-          path: artifacts
-
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/*
+          files: |
+            release/*.zip
+            release/*.dmg
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
