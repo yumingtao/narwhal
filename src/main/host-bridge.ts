@@ -230,7 +230,16 @@ export class HostBridge {
   private handleHost(frame: JsonRecord): void {
     const type = string(frame.type, 80); const sessionId = validId(frame.sessionId)
     if (type === 'host/session-status' && sessionId) { if (sessionId === this.selectedSessionId) this.running = frame.running === true; this.sessions = this.sessions.map((item) => item.id === sessionId ? { ...item, running: frame.running === true } : item); this.emit() }
-    if (type === 'host/agent-error' && sessionId === this.selectedSessionId) this.pushTrajectory({ id: `error-${Date.now()}`, kind: 'error', label: 'Agent error', text: string(frame.message) ?? 'The local Agent reported an error.', time: Date.now() })
+    if (type === 'host/agent-error' && sessionId === this.selectedSessionId) {
+      const rawMsg = string(frame.message) ?? 'The local Agent reported an error.'
+      // DSH's raw "Connection error." hint is too brief — wrap with actionable context
+      const text = rawMsg.toLowerCase().includes('connection')
+        ? `${rawMsg} Check that the provider base URL is reachable and the API key is valid.`
+        : rawMsg
+      const err: ChatItem = { id: `error-${Date.now()}`, kind: 'error', label: 'Agent error', text, time: Date.now() }
+      this.messages = [...this.messages, err].slice(-MAX_ITEMS)
+      this.pushTrajectory(err, true)
+    }
     if (type === 'host/session-added' || type === 'host/session-removed') void this.listSessions()
   }
   private pushTrajectory(item: ChatItem, emit = true): void { this.trajectory = [...this.trajectory, item].slice(-MAX_ITEMS); if (emit) this.emit() }
@@ -300,7 +309,7 @@ export class HostBridge {
     if (type === 'turn/start') this.running = true
     this.emit()
   }
-  private async rpc<T>(method: 'session.list' | 'session.create' | 'session.history' | 'session.prompt' | 'session.cancel' | 'session.models' | 'session.selectModel' | 'llm.providers' | 'llm.models' | 'settings.describe' | 'settings.mutate' | 'credentials.describe' | 'credentials.set' | 'skill.list' | 'goal.create' | 'goal.edit' | 'goal.pause' | 'goal.resume' | 'goal.complete' | 'goal.clear', payload: JsonRecord): Promise<T> {
+  private async rpc<T>(method: 'session.list' | 'session.create' | 'session.history' | 'session.prompt' | 'session.cancel' | 'session.models' | 'session.selectModel' | 'llm.providers' | 'llm.models' | 'settings.describe' | 'settings.mutate' | 'credentials.describe' | 'credentials.set' | 'credentials.unset' | 'skill.list' | 'goal.create' | 'goal.edit' | 'goal.pause' | 'goal.resume' | 'goal.complete' | 'goal.clear', payload: JsonRecord): Promise<T> {
     if (!this.origin) throw new Error('Local Agent is not ready')
     const response = await fetch(`${this.origin}/api/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }), signal: AbortSignal.timeout(30_000) })
     if (!response.ok) {
@@ -807,17 +816,40 @@ export class HostBridge {
     const resolved = await this.resolveProviderNsPath(providerId)
     if (!inConfig && !resolved) throw new Error('Provider not found')
     if (resolved && resolved.path.length === 0) throw new Error('Built-in providers cannot be removed')
-    // 1) Remove from DSH settings namespace (best-effort — may fail for
-    //    config-only providers that never wrote into DSH).
+    // 1) Remove from DSH settings namespace AND clear any stored API key.
+    //    We need the current profile to derive the credential ref before we
+    //    unset the settings path (after unset, the profile is gone and we
+    //    can't compute the ref anymore).
     if (resolved) {
+      let credentialRef: string | undefined
       try {
         const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
         const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === resolved.ns) : undefined
-        if (isRecord(section) && typeof section.revision === 'number') {
-          await this.rpc('settings.mutate', { ns: resolved.ns, ops: [{ op: 'unset', path: resolved.path }], expectedRevision: section.revision })
+        if (isRecord(section)) {
+          const profile = isRecord(section.value) ? valueAt(section.value, resolved.path) : undefined
+          if (isRecord(profile)) credentialRef = credentialRefFor(providerId, profile)
+          if (typeof section.revision === 'number') {
+            await this.rpc('settings.mutate', { ns: resolved.ns, ops: [{ op: 'unset', path: resolved.path }], expectedRevision: section.revision })
+          }
         }
       } catch (err) {
-        console.warn('[narwhal] deleteProvider: DSH unset failed (config.json still being updated):', err instanceof Error ? err.message : String(err))
+        console.warn('[narwhal] deleteProvider: DSH settings unset failed (config.json still being updated):', err instanceof Error ? err.message : String(err))
+      }
+      // Clear credential after settings are gone (best-effort). DSH rejects
+      // credentials.set with empty value so we use credentials.unset instead.
+      if (credentialRef) {
+        try {
+          // Verify it's actually configured before unsetting — avoids unnecessary calls.
+          const desc = await this.rpc<{ credentials?: unknown }>('credentials.describe', { refs: [credentialRef] })
+          const map = isRecord(desc.credentials) ? desc.credentials as Record<string, unknown> : {}
+          const entry = map[credentialRef]
+          if (isRecord(entry) && entry.configured === true) {
+            await this.rpc('credentials.unset', { ref: credentialRef })
+            console.log(`[narwhal] deleteProvider: cleared credential ref=${credentialRef}`)
+          }
+        } catch (err) {
+          console.warn('[narwhal] deleteProvider: credential unset failed:', err instanceof Error ? err.message : String(err))
+        }
       }
     }
     // 2) Remove from config.json

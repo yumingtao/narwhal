@@ -116,10 +116,10 @@ export default NarwhalCommands;
 
 writeFileSync(join(pluginDir, "index.js"), pluginCode);
 
-// Also stage a copy into dsh-home/narwhal-plugins/ for easy inspection
+// Also stage a copy into ~/.narwhal/narwhal-plugins/ for easy inspection
 const dshHome = join(
   process.env.HOME || resolve("~"),
-  "Library", "Application Support", "narwhal", "dsh-home"
+  ".narwhal"
 );
 const homeDir = join(dshHome, "narwhal-plugins");
 mkdirSync(homeDir, { recursive: true });

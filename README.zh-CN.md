@@ -427,6 +427,64 @@ narwhal/
 
 > `runtime/dsh/package.json` 是由 `pnpm stage:runtime` 生成的安装 manifest。它从本地 Harness checkout 锁定 `@deepseek-ai/dsh-*` workspace 包，只能在该上游 workspace 内解析。请勿手动编辑或直接对它运行 `pnpm install`。
 
+## Runtime 边界与已知局限
+
+Narwhal 将 DeepSeek Harness（`@deepseek-ai/dsh`）作为**独立 Node.js 子进程**启动。本节说明双方各自负责什么，以及已知的边界 workaround。
+
+### Narwhal 与 DSH 的职责划分
+
+| 关注点 | Narwhal | DSH Runtime |
+| --- | --- | --- |
+| **进程生命周期** | ✅ Spawn、监控、重启 DSH | ❌ 自行管理（无 supervisor） |
+| **UI 渲染** | ✅ 全部可见 UI | ❌ 纯 API 层，无 UI |
+| **Workspace 列表** | ✅ `workbench.json`（userData） | ❌ 不知道 workspace 存在 |
+| **Session CRUD** | ❌ 只读（通过 `session.list`） | ✅ 权威存储（内存 + 磁盘） |
+| **Session 生命周期** | ⚠️ *仅 workaround*（见下方） | ✅ 没有 `session.delete` API |
+| **Provider CRUD** | ✅ UI + config.json | ⚠️ DSH settings namespace（Narwhal 还必须清理 credentials） |
+| **Credentials（API Key）** | ❌ 只读 UI 展示 | ✅ `.credentials.yaml` + `credentials.set/unset` API |
+| **Settings** | ✅ `config.json`（权威源） | ⚠️ `settings.yaml`（每次启动时从 config.json 生成） |
+| **插件加载** | ✅ Cordis 插件安装/移除 | ✅ 运行时执行插件 |
+
+### 通信协议
+
+所有交互均为 **JSON-over-HTTP** + 类型化 envelope：
+```json
+{ "type": "client-request", "rpcId": "uuid", "method": "session.list", "payload": {} }
+```
+
+入站事件通过 WebSocket 推送（`/api/events.mux`）：
+```json
+{ "type": "agent-error", "text": "...", "time": 1234567890 }
+```
+
+### 已知边界裂缝与 workaround
+
+以下是 DSH 没有提供 Narwhal 所需 API 的地方，我们不得不绕过干净的边界。DSH 发布新版本补齐后，应重新审视这些 workaround。
+
+**1. 删除 workspace（含 session）**
+
+DSH **没有 `session.delete` HTTP API**。从磁盘删除 session 文件（`~/.narwhal/sessions/<slug>/`）并清理 projcache（`storages/session_projcache.json`）**对正在运行的 DSH 进程无效** —— 它仍从内存缓存返回旧 session ID。
+
+**Workaround:** 从磁盘删除后，Narwhal 调用 `supervisor.stop()` 再 `supervisor.start()` 重启 DSH 进程。重启时 DSH 从干净磁盘重新加载，旧 session 消失。
+
+**代码位置:** `src/main/index.ts` → `deleteDshSessionsForCwd()` + `delete-workspace` IPC handler。
+
+**2. 删除 provider（含已设置的 API key）**
+
+`settings.mutate {op:"unset"}` 只从 DSH settings namespace 删除 provider 配置 — **不会自动清理** `~/.narwhal/.credentials.yaml` 里的 credential 条目。DSH 要求显式调 `credentials.unset {ref}`。credential ref 由 provider 的 `apiKeyEnv` 字段推导（默认 `<ID>_API_KEY`）。
+
+**Workaround:** 调 `settings.mutate unset` 之前，先从 DSH settings 读取 provider profile 计算 credential ref，然后调 `credentials.describe` 确认 key 存在，最后调 `credentials.unset` 清 key。
+
+**代码位置:** `src/main/host-bridge.ts` → `deleteProvider()`。
+
+**3. supervisor.start() 在 DSH 存活时是空操作**
+
+`supervisor.start()` 在已有活跃 DSH 进程时立即返回（幂等设计 —— "确保 DSH 在跑"）。这意味着任何需要**真正重启** DSH（不是只确保它运行）的路径都必须先 `supervisor.stop()` 再 `supervisor.start()`。
+
+**已知陷阱:** 天真的 `startHost()` 调用在 DSH 已运行时会被静默跳过。正确姿势永远是 `stop() → start()`。
+
+---
+
 ## 与 DeepSeek Harness 的关系
 
 Narwhal 是一个独立项目，依赖兼容的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) runtime。关键点：

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { appendFile, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -8,7 +9,7 @@ import type { AgentConfiguration, AgentConversation, AgentSnapshot, Conversation
 import { createHostSupervisor, type HostGeneration } from './host-supervisor.js'
 import { HostBridge } from './host-bridge.js'
 import { resolveRuntime, type DshRuntime } from './runtime.js'
-import { loadConfig, getConfig, getLoadError, saveConfig, getConfigPath, syncToDsh, getDshHome } from './config.js'
+import { loadConfig, getConfig, getLoadError, saveConfig, getConfigPath, syncToDsh, getDshHome, migrateLegacyDshHome } from './config.js'
 import { searchMcpServers as registrySearchMcp, searchPlugins as registrySearchPlugins, discoverSkills } from './registry-client.js'
 import { installBundlePlugin, uninstallBundlePlugin, listInstalledBundlePlugins, installMcpServerToConfig, uninstallMcpServerFromConfig, installSkillFromUrl, removeSkillById, getSkillDirs } from './install-executor.js'
 
@@ -159,14 +160,39 @@ async function snapshot(): Promise<WorkbenchSnapshot> {
 /** Keep HostBridge's in-memory session filter in sync with store.workspaces. */
 function syncSurvivingCwds(): void { hostBridge.setSurvivingCwds(store.workspaces.map((w) => w.path)) }
 /** Physically delete DSH runtime session data for a given workspace path.
- *  DSH stores sessions under dsh-home/sessions/--<path-with-slashes-replaced-by-dashes>--/
- *  e.g. /Users/foo/workspace → --Users-foo-workspace-- */
+ *  Cleans both the sessions/<slug>/ dir AND the session_projcache.json entries
+ *  that DSH runtime uses to restore sessions on restart. */
 async function deleteDshSessionsForCwd(cwd: string): Promise<void> {
   try {
+    // 1. Delete session data directory
     const slug = '--' + cwd.replace(/^\/+/u, '').replace(/\//gu, '-') + '--'
     const sessionsDir = join(getDshHome(), 'sessions', slug)
     await rm(sessionsDir, { recursive: true, force: true })
     console.log('[narwhal] deleted DSH sessions dir:', sessionsDir)
+
+    // 2. Remove matching entries from session_projcache.json
+    const projcachePath = join(getDshHome(), 'storages', 'session_projcache.json')
+    if (existsSync(projcachePath)) {
+      try {
+        const raw = await readFile(projcachePath, 'utf-8')
+        const projcache = JSON.parse(raw)
+        const sessions = projcache?.tables?.sessions
+        if (sessions && typeof sessions === 'object') {
+          const keysToDelete: string[] = []
+          for (const [sid, record] of Object.entries(sessions)) {
+            const identity = (record as any)?.identity
+            if (identity && identity.cwd === cwd) keysToDelete.push(sid)
+          }
+          if (keysToDelete.length) {
+            for (const sid of keysToDelete) delete sessions[sid]
+            await writeFile(projcachePath, JSON.stringify(projcache), 'utf-8')
+            console.log('[narwhal] removed', keysToDelete.length, 'session entries from projcache for cwd', cwd)
+          }
+        }
+      } catch (e) {
+        console.warn('[narwhal] deleteDshSessionsForCwd: projcache cleanup failed:', e instanceof Error ? e.message : String(e))
+      }
+    }
   } catch (e) {
     console.warn('[narwhal] deleteDshSessionsForCwd failed (non-fatal):', e instanceof Error ? e.message : String(e))
   }
@@ -241,7 +267,26 @@ function registerIpc(): void {
   ipcMain.handle('narwhal:choose-workspace', async (event) => { sender(event); return chooseWorkspace() })
   ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })
   ipcMain.handle('narwhal:rename-workspace', async (event, raw) => { sender(event); const value = asRecord(raw); const id = asString(value.workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); const name = asString(value.name, 'workspace name', 120); if (!name) throw new Error('Workspace name is required'); workspace.name = name; await persist(); return snapshot() })
-  ipcMain.handle('narwhal:delete-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.workspaces = store.workspaces.filter((item) => item.id !== id); if (store.selectedWorkspaceId === id) { store.selectedWorkspaceId = store.workspaces[0]?.id } syncSurvivingCwds(); await deleteDshSessionsForCwd(workspace.path); if (workspace.conversations.length && store.workspaces.length === 0) { /* no-op */ } await persist(); return snapshot() })
+  ipcMain.handle('narwhal:delete-workspace', async (event, raw) => {
+    sender(event)
+    const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100)
+    const workspace = requireWorkspace(id)
+    store.workspaces = store.workspaces.filter((item) => item.id !== id)
+    if (store.selectedWorkspaceId === id) { store.selectedWorkspaceId = store.workspaces[0]?.id }
+    syncSurvivingCwds()
+    await deleteDshSessionsForCwd(workspace.path)
+    // Restart DSH runtime so it reloads session list from clean disk state.
+    // DSH has no session.delete API — without a restart, stale in-memory
+    // sessions leak back in whenever hostBridge.listSessions() pulls from runtime.
+    // NOTE: must stop + start — supervisor.start() is a no-op when active exists.
+    if (agent.state === 'ready') {
+      console.log('[narwhal] delete-workspace: restarting DSH runtime to drop stale sessions')
+      await getSupervisor().stop()
+      await startHost()
+    }
+    await persist()
+    return snapshot()
+  })
   ipcMain.handle('narwhal:create-conversation', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const now = new Date().toISOString(); const conversation: Conversation = { id: randomUUID(), workspaceId: workspace.id, title: asString(value.title, 'title', 120), goal: asString(value.goal, 'goal', 1200), status: 'active', todos: [], createdAt: now, updatedAt: now }; workspace.conversations.unshift(conversation); workspace.selectedConversationId = conversation.id; await persist(); return snapshot() })
   ipcMain.handle('narwhal:update-conversation', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const conversationId = asString(value.conversationId, 'conversationId', 100); const conversation = workspace.conversations.find((item) => item.id === conversationId); if (!conversation) throw new Error('Conversation not found'); const status = value.status; if (status !== undefined && status !== 'active' && status !== 'done') throw new Error('Invalid conversation status'); workspace.conversations = workspace.conversations.map((item) => item.id === conversationId ? { ...item, ...(value.title !== undefined && { title: asString(value.title, 'title', 120) }), ...(value.goal !== undefined && { goal: asString(value.goal, 'goal', 1200) }), ...(status !== undefined && { status: status as ConversationStatus }), updatedAt: new Date().toISOString() } : item); await persist(); return snapshot() })
   ipcMain.handle('narwhal:add-todo', async (event, raw) => { sender(event); const value = asRecord(raw); const workspace = requireWorkspace(); const conversationId = asString(value.conversationId, 'conversationId', 100); const conversation = workspace.conversations.find((item) => item.id === conversationId); if (!conversation) throw new Error('Conversation not found'); const todo: TodoItem = { id: randomUUID(), text: asString(value.text, 'todo text', 240), done: false }; workspace.conversations = workspace.conversations.map((item) => item.id === conversationId ? { ...item, todos: [...item.todos, todo], updatedAt: new Date().toISOString() } : item); await persist(); return snapshot() })
@@ -512,8 +557,8 @@ async function bootstrap(): Promise<void> {
   // Register IPC handlers EARLY — before any operation that might throw.
   // Otherwise a pre-register crash leaves the renderer with no bridge.
   registerIpc(); console.log('[narwhal] bootstrap: IPC handlers registered')
-  const dshHome = join(app.getPath('userData'), 'dsh-home')
-  try { await mkdir(dshHome, { recursive: true, mode: 0o700 }) } catch (e) { console.warn('[narwhal] dsh-home mkdir failed:', e instanceof Error ? e.message : String(e)) }
+  try { await migrateLegacyDshHome() } catch (e) { console.warn('[narwhal] migrateLegacyDshHome failed:', e instanceof Error ? e.message : String(e)) }
+  const dshHome = getDshHome()
   try { selectedRuntime = resolveRuntime(); console.log('[narwhal] bootstrap: DSH runtime at', selectedRuntime!.root, 'cli:', selectedRuntime!.cliEntry) } catch (e) { console.error('[narwhal] bootstrap: resolveRuntime FAILED:', e instanceof Error ? e.message : String(e)); throw e }
   try {
     // Repair any providers in config.json with empty/missing apiKeyEnv before

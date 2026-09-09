@@ -145,6 +145,9 @@ export const configSchema = z.object({
   version: z.literal(CONFIG_VERSION),
   theme: z.enum(THEME_MODES).optional().default('auto'),
 
+  // Display language — 'en' or 'zh'. 'auto' not stored here; resolved at runtime.
+  language: z.enum(['en', 'zh']).optional(),
+
   // UI onboarding state (mirrors DSH ui-onboarding namespace)
   uiOnboarding: z.string().optional(),
 

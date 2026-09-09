@@ -17,6 +17,7 @@ export type ThemeMode = 'auto' | 'dark' | 'light'
 export interface NarwhalConfig {
   readonly version: 1
   readonly theme: ThemeMode
+  readonly language?: 'en' | 'zh'
   readonly defaultModel?: string
   readonly defaultEffort: 'low' | 'medium' | 'high'
   readonly agentMode: string

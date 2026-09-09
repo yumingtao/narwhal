@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -14,8 +14,50 @@ export function getConfigPath(): string {
   return join(configDir, 'config.json')
 }
 
+/**
+ * DSH runtime home — where DSH stores sessions, profiles, settings.yaml, etc.
+ * Lives under ~/.narwhal to align with the app name, not under Electron userData.
+ */
 export function getDshHome(): string {
-  return join(app.getPath('userData'), 'dsh-home')
+  return join(homedir(), '.narwhal')
+}
+
+// ── Migration ───────────────────────────────────────────────────────────────
+
+/**
+ * Migrate legacy DSH data from Electron userData/dsh-home → ~/.narwhal.
+ * No-op if legacy dir doesn't exist. Safe to call repeatedly.
+ */
+export async function migrateLegacyDshHome(): Promise<void> {
+  const legacy = join(app.getPath('userData'), 'dsh-home')
+  const target = getDshHome()
+
+  const legacyExists = existsSync(legacy)
+  if (!legacyExists) {
+    await mkdir(target, { recursive: true, mode: 0o700 })
+    return
+  }
+
+  const targetExists = existsSync(target)
+  if (targetExists) {
+    // Both present — target wins. Leave legacy for manual cleanup to avoid data loss.
+    console.warn('[narwhal] migrateLegacyDshHome: both legacy (', legacy, ') and target (', target, ') exist. Keeping target, legacy left for manual cleanup.')
+    return
+  }
+
+  // Move: try atomic rename first, fall back to entry-by-entry
+  try {
+    await rename(legacy, target)
+    console.log('[narwhal] migrateLegacyDshHome:', legacy, '→', target)
+  } catch (e) {
+    console.warn('[narwhal] migrateLegacyDshHome: rename failed, falling back:', e instanceof Error ? e.message : String(e))
+    await mkdir(target, { recursive: true, mode: 0o700 })
+    for (const entry of await readdir(legacy)) {
+      await rename(join(legacy, entry), join(target, entry))
+    }
+    await rm(legacy, { recursive: true, force: true })
+    console.log('[narwhal] migrateLegacyDshHome: migrated contents of', legacy, '→', target)
+  }
 }
 
 // ── Singleton store ─────────────────────────────────────────────────────────

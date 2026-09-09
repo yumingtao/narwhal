@@ -8,6 +8,7 @@ import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import 'highlight.js/styles/github-dark.css'
 import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, ChatItem, Command, Conversation, DesktopSettings, NarwhalConfig, ThemeMode, UsageStats, WorkbenchSnapshot } from '../shared/desktop-contract'
+import { detectLang, getLang, setLang, t, subscribe, type Lang } from '../shared/i18n'
 import { classifyTrajectory } from '../shared/trajectory-classifier'
 import { buildTrajectoryData } from './trajectory/builder'
 import { TrajectoryToolbar } from './trajectory/TrajectoryToolbar'
@@ -144,6 +145,12 @@ function App() {
     const stored = localStorage.getItem('narwhal:theme') as ThemeMode | null
     return stored ?? 'auto'
   })
+  const [lang, setLangState] = useState<Lang>(() => {
+    // Initial — system default or stored override. Final value applied in bootstrap useEffect.
+    return detectLang()
+  })
+  // Subscribe to language changes so re-renders happen when user switches language.
+  useEffect(() => subscribe((l) => setLangState(l)), [])
   const selectedConversation = useMemo(() => workbench.conversations.find((conv) => conv.id === workbench.selectedConversationId) ?? workbench.conversations[0], [workbench])
   const workspace = workbench.workspaces.find((item) => item.id === workbench.selectedWorkspaceId)
   const mutate = async (operation: () => Promise<WorkbenchSnapshot>) => { try { setError(''); const next = await operation(); setWorkbench(next); setConversation(next.conversation) } catch { setError('We couldn’t complete that action. Your local files were not changed.') } }
@@ -182,6 +189,9 @@ function App() {
       if (bootstrapConfig) {
         setConfig(bootstrapConfig)
         setTheme(bootstrapConfig.theme)
+        const resolved = detectLang(bootstrapConfig.language)
+        setLang(resolved)
+        setLangState(resolved)
       }
     }).catch(() => setError('Narwhal could not load its local workspace data.'))
     const unAgent = api.onAgentState(setAgent); const unConversation = api.onConversation(setConversation)
@@ -305,7 +315,7 @@ function App() {
     {workbench.panelOpen && <button className="drawer-backdrop" aria-label="Close work context" onClick={() => void mutate(() => api.setPanelOpen(false))}/>} 
     <button className={`panel-trigger${workbench.panelOpen ? ' open' : ''}`} style={workbench.panelOpen ? { right: panelWidth + 11 } : undefined} onClick={() => void mutate(() => api.setPanelOpen(!workbench.panelOpen))} aria-label="Toggle work context"><Icon name="panel"/></button>
     {deliverableDraft && <DeliverableDialog close={() => setDeliverableDraft(false)} save={(relativePath, label) => mutate(() => api.pinDeliverable({ relativePath, label })).then(() => setDeliverableDraft(false))}/>} 
-    {settingsOpen && <SettingsDialog settings={settings} agent={agent} theme={theme} setTheme={setTheme} close={closeSettings} restart={() => void api.retryAgent()} initialTab={settingsTab ?? 'models'}/>} 
+    {settingsOpen && <SettingsDialog settings={settings} agent={agent} theme={theme} setTheme={setTheme} lang={lang} setLang={setLangState} close={closeSettings} restart={() => void api.retryAgent()} initialTab={settingsTab ?? 'models'}/>} 
   </main>
 }
 
@@ -1265,7 +1275,7 @@ function ChangesSection({ changes }: { changes: readonly { path: string; kind: s
 function DeliverablesSection({ entries, onNew, onReveal, onRemove }: { entries: WorkbenchSnapshot['deliverables']; onNew: () => void; onReveal: (path: string) => void; onRemove: (path: string) => void }) { return <section className="panel-section"><div className="section-title"><span>Deliverables</span><button onClick={onNew}><Icon name="plus"/></button></div>{entries.length ? <div className="deliverable-list">{entries.map((item) => <div key={item.relativePath}><button onClick={() => onReveal(item.relativePath)}><Icon name="file"/><span>{item.label}</span><small>{item.relativePath}</small></button><button className="remove" onClick={() => onRemove(item.relativePath)}><Icon name="close"/></button></div>)}</div> : <button className="quiet-add" onClick={onNew}>Pin an output file</button>}</section> }
 function DeliverableDialog({ close, save }: { close: () => void; save: (path: string, label: string) => Promise<void> }) { const [path, setPath] = useState(''); const [label, setLabel] = useState(''); return <Dialog title="Pin deliverable" close={close}><label>Relative file path<input autoFocus value={path} onChange={(event) => setPath(event.target.value)} placeholder="release/Narwhal.dmg"/></label><label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} placeholder="macOS build"/></label><button className="primary" disabled={!path.trim() || !label.trim()} onClick={() => void save(path, label)}>Pin file</button></Dialog> }
 function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) { return <div className="modal" role="dialog" aria-modal="true"><form className="dialog" onSubmit={(event) => event.preventDefault()}><div><h2>{title}</h2><button className="close-dialog" onClick={close}><Icon name="close"/></button></div>{children}</form></div> }
-function SettingsDialog({ settings, agent, theme, setTheme, close, restart, initialTab }: { settings: DesktopSettings; agent: AgentSnapshot; theme: ThemeMode; setTheme: (t: ThemeMode) => void; close: () => void; restart: () => void; initialTab?: SettingsTab }) {
+function SettingsDialog({ settings, agent, theme, setTheme, lang, setLang, close, restart, initialTab }: { settings: DesktopSettings; agent: AgentSnapshot; theme: ThemeMode; setTheme: (t: ThemeMode) => void; lang: Lang; setLang: (l: Lang) => void; close: () => void; restart: () => void; initialTab?: SettingsTab }) {
   const [tab, setTab] = useState(initialTab ?? 'models')
   useEffect(() => { if (initialTab) setTab(initialTab) }, [initialTab])
   const [configuration, setConfiguration] = useState<AgentConfiguration>({ available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [] } })
@@ -1293,18 +1303,34 @@ function SettingsDialog({ settings, agent, theme, setTheme, close, restart, init
   const groupOrder = ['Agent', 'Integrations', 'System']
   const selectTab = (next: typeof tab) => { setTab(next); document.getElementById(`settings-tab-${next}`)?.focus() }
   const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => { const index = navigation.findIndex((item) => item.id === tab); const key = event.key; const nextIndex = key === 'ArrowDown' || key === 'ArrowRight' ? (index + 1) % navigation.length : key === 'ArrowUp' || key === 'ArrowLeft' ? (index - 1 + navigation.length) % navigation.length : key === 'Home' ? 0 : key === 'End' ? navigation.length - 1 : undefined; if (nextIndex === undefined) return; event.preventDefault(); selectTab(navigation[nextIndex].id) }
-  return <div className="modal" role="dialog" aria-modal="true" aria-label="Settings"><section className="settings-dialog"><header className="settings-head"><div><p>Local workbench</p><h2>Settings</h2></div><button className="close-dialog" aria-label="Close settings" onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label="Settings sections" role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className={`settings-notice ${message.kind}`} role="status">{message.text}</p>}{!configuration.available && tab !== 'runtime' && tab !== 'theme' && tab !== 'mcp' && tab !== 'plugins' && tab !== 'skills' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={() => selectTab('models')}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : tab === 'mcp' ? <McpServersTab/> : tab === 'plugins' ? <PluginsTab/> : tab === 'skills' ? <SkillsTab/> : tab === 'theme' ? <ThemeSettings theme={theme} setTheme={setTheme}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
+  return <div className="modal" role="dialog" aria-modal="true" aria-label="Settings"><section className="settings-dialog"><header className="settings-head"><div><p>Local workbench</p><h2>Settings</h2></div><button className="close-dialog" aria-label="Close settings" onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label="Settings sections" role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className={`settings-notice ${message.kind}`} role="status">{message.text}</p>}{!configuration.available && tab !== 'runtime' && tab !== 'theme' && tab !== 'mcp' && tab !== 'plugins' && tab !== 'skills' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={() => selectTab('models')}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : tab === 'mcp' ? <McpServersTab/> : tab === 'plugins' ? <PluginsTab/> : tab === 'skills' ? <SkillsTab/> : tab === 'theme' ? <ThemeSettings theme={theme} setTheme={setTheme} lang={lang} setLang={setLangState}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
 }
-function ThemeSettings({ theme, setTheme }: { theme: ThemeMode; setTheme: (t: ThemeMode) => void }) {
-  const options: ReadonlyArray<{ readonly id: ThemeMode; readonly label: string; readonly description: string }> = [
+function ThemeSettings({ theme, setTheme, lang, setLang }: { theme: ThemeMode; setTheme: (t: ThemeMode) => void; lang: Lang; setLang: (l: Lang) => void }) {
+  const themeOptions: ReadonlyArray<{ readonly id: ThemeMode; readonly label: string; readonly description: string }> = [
     { id: 'auto', label: 'Auto', description: 'Follow your system appearance' },
     { id: 'dark', label: 'Dark', description: 'Always use dark theme' },
     { id: 'light', label: 'Light', description: 'Always use light theme' },
   ]
+  const languageOptions: ReadonlyArray<{ readonly id: Lang; readonly label: string }> = [
+    { id: 'en', label: 'English' },
+    { id: 'zh', label: '简体中文' },
+  ]
+  const handleLangChange = async (l: Lang) => {
+    setLang(l)
+    void api.saveConfig({ language: l }).catch(() => undefined)
+  }
   return <section className="settings-page theme-settings">
     <div className="settings-page-intro"><p>Appearance</p><small>Choose how Narwhal looks on your screen.</small></div>
+    <div className="settings-group">
+      <label className="settings-label">Language
+        <select value={lang} onChange={(e) => handleLangChange(e.target.value as Lang)} className="settings-select">
+          {languageOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+      </label>
+    </div>
+    <div className="settings-page-intro"><p>Theme</p><small>Pick a color scheme that works for you.</small></div>
     <div className="theme-options">
-      {options.map((opt) => (
+      {themeOptions.map((opt) => (
         <label key={opt.id} className={`theme-option${theme === opt.id ? ' active' : ''}`}>
           <input type="radio" name="theme" value={opt.id} checked={theme === opt.id} onChange={() => setTheme(opt.id)} />
           <span className="theme-option-radio"/><span className="theme-option-label">{opt.label}</span><span className="theme-option-desc">{opt.description}</span>
@@ -1356,6 +1382,12 @@ function ProviderRow({ provider, update, models, openModels, onDelete }: { provi
     if (saving) return
     setSaving(true)
     try {
+      // If user entered a new API key, save it first
+      const trimmedKey = key.trim()
+      if (trimmedKey) {
+        await api.setProviderApiKey({ provider: provider.id, value: trimmedKey })
+        setKey('')
+      }
       await update(() => api.updateProvider({
         provider: provider.id,
         baseUrl: baseUrl.trim() || undefined,

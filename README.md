@@ -429,6 +429,64 @@ narwhal/
 
 > `runtime/dsh/package.json` is a generated staging manifest produced by `pnpm stage:runtime`. It pins `@deepseek-ai/dsh-*` workspace packages from a local Harness checkout and is only resolvable inside that upstream workspace. Do not edit it by hand or run `pnpm install` against it directly.
 
+## Runtime Boundary & Known Limitations
+
+Narwhal spawns DeepSeek Harness (`@deepseek-ai/dsh`) as an **independent Node.js subprocess**. This section documents what each side owns, and the known boundary workarounds.
+
+### What Narwhal owns vs. DSH owns
+
+| Concern | Narwhal | DSH Runtime |
+| --- | --- | --- |
+| **Process lifecycle** | ✅ Spawn, monitor, restart DSH | ❌ Self-managed (no supervisor) |
+| **UI rendering** | ✅ All visible UI | ❌ None (pure API layer) |
+| **Workspace list** | ✅ `workbench.json` (userData) | ❌ Doesn't know workspaces exist |
+| **Session CRUD** | ❌ Read-only (via `session.list`) | ✅ Authoritative store in memory + disk |
+| **Session lifecycle** | ⚠️ *Workaround only* (see below) | ✅ Has no `session.delete` API |
+| **Provider CRUD** | ✅ UI + config.json | ⚠️ DSH settings namespace (Narwhal must also clean credentials) |
+| **Credentials (API keys)** | ❌ Read-only UI display | ✅ `.credentials.yaml` + `credentials.set/unset` APIs |
+| **Settings** | ✅ `config.json` (authoritative) | ⚠️ `settings.yaml` (generated from config.json on startup) |
+| **Plugin loading** | ✅ Cordis plugin install/remove | ✅ Executes plugins at runtime |
+
+### Communication protocol
+
+All interaction is **JSON-over-HTTP** with typed envelope:
+```json
+{ "type": "client-request", "rpcId": "uuid", "method": "session.list", "payload": {} }
+```
+
+Inbound events arrive over WebSocket (`/api/events.mux`):
+```json
+{ "type": "agent-error", "text": "...", "time": 1234567890 }
+```
+
+### Known boundary gaps & workarounds
+
+These are places where DSH doesn't provide an API Narwhal needs, so we bypass the clean boundary. They should be revisited whenever DSH releases a version that closes the gap.
+
+**1. Deleting a workspace (with sessions)**
+
+DSH has **no `session.delete` HTTP API**. Deleting sessions from disk (`~/.narwhal/sessions/<slug>/`) and clearing the projcache (`storages/session_projcache.json`) has **no effect** on the running DSH process — it keeps serving the stale session IDs from its in-memory cache.
+
+**Workaround:** After deleting session files from disk, Narwhal calls `supervisor.stop()` then `supervisor.start()` to respawn the DSH process. On restart, DSH re-reads from disk and the stale sessions are gone.
+
+**Where:** `src/main/index.ts` → `deleteDshSessionsForCwd()` + `delete-workspace` IPC handler.
+
+**2. Deleting a provider (with saved API key)**
+
+`settings.mutate {op:"unset"}` only removes the provider config from DSH's settings namespace — it does **not** clean up the credential entry in `~/.narwhal/.credentials.yaml`. DSH requires an explicit separate `credentials.unset {ref}` call. The credential ref is derived from the provider's `apiKeyEnv` field (or defaults to `<ID>_API_KEY`).
+
+**Workaround:** Before calling `settings.mutate unset`, Narwhal first reads the provider profile from DSH settings to compute the credential ref. Then it calls `credentials.describe` to confirm a key exists, followed by `credentials.unset`.
+
+**Where:** `src/main/host-bridge.ts` → `deleteProvider()`.
+
+**3. supervisor.start() is a no-op when DSH is alive**
+
+`supervisor.start()` returns immediately if an active DSH process already exists (it's idempotent by design — "start running DSH"). This means any code path that needs to **restart** DSH (not just ensure it's running) must call `supervisor.stop()` first, then `supervisor.start()`.
+
+**Known trap:** Naive `startHost()` calls that assume they restart DSH are silently no-ops when DSH is already running. The fix is always `stop() → start()` for actual restarts.
+
+---
+
 ## Relationship to DeepSeek Harness
 
 Narwhal is an independent project that relies on a compatible [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) runtime. Key points:
