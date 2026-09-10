@@ -38,6 +38,21 @@ function trajectoryFor(event: JsonRecord, type: string): { readonly label: strin
   return { label: descriptor.label, text: descriptor.text, kind: descriptor.kind }
 }
 function validId(value: unknown): string | undefined { const id = string(value, 140); return id && /^[A-Za-z0-9._:-]+$/u.test(id) ? id : undefined }
+
+// Custom OpenAI-compatible providers advertise low/medium/high reasoning by
+// default. DSH's pi-ai settings schema stores them as a level→wire-spelling
+// dict; Narwhal's own config schema stores a plain enum array.
+const OPENAI_REASONING_LEVELS = ['low', 'medium', 'high'] as const
+function isOpenAiProtocol(api: unknown): boolean { return typeof api === 'string' && api.includes('openai') }
+function dshReasoningEfforts(): Record<string, string> { return Object.fromEntries(OPENAI_REASONING_LEVELS.map((level) => [level, level])) }
+function modelsForDsh(modelIds: readonly string[], api: unknown): JsonRecord[] {
+  const reasoning = isOpenAiProtocol(api)
+  return modelIds.map((id) => reasoning ? { id, name: id, reasoningEfforts: dshReasoningEfforts() } : { id, name: id })
+}
+function modelsForConfig(modelIds: readonly string[], api: unknown): { id: string; name: string; reasoningEfforts?: ('low' | 'medium' | 'high')[] }[] {
+  const reasoning = isOpenAiProtocol(api)
+  return modelIds.map((id) => reasoning ? { id, name: id, reasoningEfforts: [...OPENAI_REASONING_LEVELS] } : { id, name: id })
+}
 export function valueAt(record: JsonRecord, path: readonly string[]): unknown { let value: unknown = record; for (const part of path) { if (!isRecord(value)) return undefined; value = value[part] } return value }
 function credentialRefFor(provider: string, profile: JsonRecord): string | undefined {
   // Empty string apiKeyEnv (from config.json migration or a previous partial
@@ -155,6 +170,23 @@ export class HostBridge {
   /** Cwd values of all surviving workspaces. Sessions whose cwd is NOT in this set are filtered out. */
   private survivingCwds = new Set<string>()
   private cwdsInitialized = false
+  /**
+   * Inactivity watchdog for the active prompt. The upstream gateway can hold
+   * a connection open without sending any bytes (observed with acme
+   * hanging >35s, or ~20s stall before the request even reaches the gateway)
+   * OR inject an error mid-stream; the latter is reported via turn/end. Any
+   * LIVE mux event for the watched session (request headers, chunks, tool
+   * calls, …) resets the idle clock. The allowance is generous (60s) rather
+   * than a 20s wall clock: high-effort reasoning models and slow gateways can
+   * legitimately exceed 20s to first token; DSH's own stream-idle timeout is
+   * 300s, so 60s of TOTAL silence only fires for genuinely stuck turns.
+   */
+  private promptWatch: { sessionId: string; lastActivity: number; timer: NodeJS.Timeout } | undefined
+  /** Error card already shown for the CURRENT turn. DSH can deliver the same
+   *  failure twice per turn (host/agent-error + turn/end) — collapse those,
+   *  but a NEW turn failing with the same message must still get its own card,
+   *  otherwise repeated identical gateway errors look like "nothing happened". */
+  private turnErrorText: string | undefined
 
   /** Called by main process whenever workspace list changes. */
   setSurvivingCwds(paths: Iterable<string>): void {
@@ -175,6 +207,8 @@ export class HostBridge {
   snapshot(): AgentConversation { return { sessions: this.filterSessions(this.sessions), selectedSessionId: this.selectedSessionId, messages: this.messages, trajectory: this.trajectory, running: this.running, ...(this.usage && { usage: this.usage }) } }
   private emit(): void { const value = this.snapshot(); for (const listener of this.listeners) listener(value) }
   private resetSelectedSession(): void {
+    this.stopPromptWatch()
+    this.turnErrorText = undefined
     this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false; this.seenEventIds.clear(); this.usage = undefined; this.openSteps.clear(); this.totalTtft = 0; this.ttftSamples = 0; this.decodeTokens = 0; this.decodeMs = 0; this.cacheReadTokens = 0
   }
   clearSelection(): AgentConversation { this.resetSelectedSession(); this.emit(); return this.snapshot() }
@@ -188,6 +222,7 @@ export class HostBridge {
   }
   async stop(): Promise<void> {
     this.stopped = true
+    this.stopPromptWatch()
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.reconnectTimer = undefined
     for (const socket of [this.mux, this.host]) { socket?.removeAllListeners(); socket?.terminate() }
@@ -224,6 +259,9 @@ export class HostBridge {
     if (type === 'session/event') {
       const sessionId = validId(frame.sessionId); const event = isRecord(frame.event) ? frame.event : undefined
       if (!sessionId || !event || sessionId !== this.selectedSessionId) return
+      // Only LIVE wire events prove the agent is still alive; history replays
+      // (refreshHistory) must not feed the inactivity watchdog.
+      if (this.promptWatch?.sessionId === sessionId) this.promptWatch.lastActivity = Date.now()
       this.ingestEvent(sessionId, event)
     } else if (type === 'stream/error') this.pushTrajectory({ id: `stream-${Date.now()}`, kind: 'error', label: 'Agent event stream', text: 'The local Agent stream needs to reconnect.', time: Date.now() })
   }
@@ -236,6 +274,7 @@ export class HostBridge {
       const text = rawMsg.toLowerCase().includes('connection')
         ? `${rawMsg} Check that the provider base URL is reachable and the API key is valid.`
         : rawMsg
+      if (this.turnErrorSeen(text)) return
       const err: ChatItem = { id: `error-${Date.now()}`, kind: 'error', label: 'Agent error', text, time: Date.now() }
       this.messages = [...this.messages, err].slice(-MAX_ITEMS)
       this.pushTrajectory(err, true)
@@ -243,6 +282,17 @@ export class HostBridge {
     if (type === 'host/session-added' || type === 'host/session-removed') void this.listSessions()
   }
   private pushTrajectory(item: ChatItem, emit = true): void { this.trajectory = [...this.trajectory, item].slice(-MAX_ITEMS); if (emit) this.emit() }
+  /** Returns true when this exact failure was already carded for the CURRENT
+   *  turn (DSH can deliver host/agent-error plus turn/end, the host one
+   *  sometimes wrapped with a hint sentence — collapse those two). The record
+   *  resets on every turn/start, so a later turn failing with the identical
+   *  provider message still produces its own visible error card. */
+  private turnErrorSeen(text: string): boolean {
+    const prev = this.turnErrorText
+    if (prev !== undefined && (prev === text || prev.includes(text) || (text.length > 24 && text.includes(prev)))) return true
+    this.turnErrorText = text
+    return false
+  }
   private rememberEvent(sessionId: string, event: JsonRecord): boolean {
     const seq = finiteNumber(event.seq)
     if (seq === undefined) return true
@@ -302,11 +352,35 @@ export class HostBridge {
       if (traj) this.pushTrajectory({ id: `${sessionId}:${seq}`, kind: traj.kind, label: traj.label, text: traj.text, time }, false)
       if (type === 'turn/end') {
         this.running = false
+        this.stopPromptWatch()
         this.messages = this.messages.map((item) => item.id === `${sessionId}:stream` ? { ...item, streaming: false } : item)
+        // Gateways (observed with acme) answer HTTP 200 + SSE and then
+        // inject an error mid-stream — either as fake assistant content
+        // ("copy the ChatGPT session id…") or as an empty 0-token error
+        // event. DSH reports it here as reason.kind === 'error'. Surface the
+        // PROVIDER'S message instead of swallowing it; each failed turn gets
+        // its own card (turnErrorSeen only dedups the same-turn double
+        // delivery). 'aborted' (our own cancel) stays silent.
+        const data = isRecord(event.data) ? event.data : {}
+        const reason = isRecord(data.reason) ? data.reason : undefined
+        if (reason && reason['kind'] === 'error') {
+          const detail = isRecord(reason['error']) ? reason['error'] : isRecord(reason['failure']) ? reason['failure'] : {}
+          const msg = string(detail['message']) ?? string(reason['error']) ?? string(reason['message']) ?? 'The model provider returned an error.'
+          if (!this.turnErrorSeen(msg)) {
+            const err: ChatItem = { id: `turn-error-${sessionId}-${seq}`, kind: 'error', label: 'Provider error', text: msg, time }
+            this.messages = [...this.messages, err].slice(-MAX_ITEMS)
+          }
+        }
+        this.emit()
         return
       }
     }
-    if (type === 'turn/start') this.running = true
+    if (type === 'turn/start') {
+      this.running = true
+      // New turn → each turn is allowed its own error card again (identical
+      // gateway failures across turns must not silently vanish).
+      this.turnErrorText = undefined
+    }
     this.emit()
   }
   private async rpc<T>(method: 'session.list' | 'session.create' | 'session.history' | 'session.prompt' | 'session.cancel' | 'session.models' | 'session.selectModel' | 'llm.providers' | 'llm.models' | 'settings.describe' | 'settings.mutate' | 'credentials.describe' | 'credentials.set' | 'credentials.unset' | 'skill.list' | 'goal.create' | 'goal.edit' | 'goal.pause' | 'goal.resume' | 'goal.complete' | 'goal.clear', payload: JsonRecord): Promise<T> {
@@ -367,21 +441,43 @@ export class HostBridge {
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
     this.running = true; this.emit()
     for (const delay of [1_000, 3_000, 8_000]) setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, delay)
-    // Safety timeout: fake/unreachable providers hang forever — surface error after 20s
-    setTimeout(() => {
-      if (this.running && this.selectedSessionId === sessionId) {
-        console.log('[host-bridge] prompt timeout fired for session', sessionId)
-        this.running = false
-        const timeoutErr: ChatItem = { id: `timeout-${randomUUID()}`, kind: 'error', text: 'The Agent did not receive a response within 20 seconds. Check that the provider base URL is reachable and the API key is valid.', time: Date.now() }
-        this.messages = [...this.messages, timeoutErr].slice(-MAX_ITEMS)
-        this.pushTrajectory({ ...timeoutErr, label: 'Request timed out' }, false)  // also to trajectory panel
-        this.emit()
-        void this.cancel().catch(() => undefined)
-      }
-    }, 20_000)
+    this.startPromptWatch(sessionId)
     return this.snapshot()
   }
-  async cancel(): Promise<void> { if (this.selectedSessionId) { await this.rpc('session.cancel', { sessionId: this.selectedSessionId }); this.running = false; this.emit() } }
+  private startPromptWatch(sessionId: string): void {
+    this.stopPromptWatch()
+    // Inactivity — not wall-clock — timeout: a turn stays alive as long as
+    // events keep arriving over the live mux stream. The 60s allowance covers
+    // slow-to-first-token reasoning models and gateways that stall before
+    // responding (observed: acme ~20s TCP stall, then a stream error);
+    // only TOTAL silence past that — no events at all — means the turn is
+    // stuck with nothing to show, so fail with an honest message and cancel.
+    const IDLE_LIMIT_MS = 60_000
+    const watch = { sessionId, lastActivity: Date.now(), timer: undefined as unknown as NodeJS.Timeout }
+    watch.timer = setInterval(() => {
+      if (this.promptWatch !== watch || this.selectedSessionId !== sessionId) { this.stopPromptWatch(); return }
+      if (!this.running) { this.stopPromptWatch(); return }
+      if (Date.now() - watch.lastActivity < IDLE_LIMIT_MS) return
+      console.log('[host-bridge] prompt inactivity timeout for session', sessionId)
+      this.stopPromptWatch()
+      this.running = false
+      const timeoutErr: ChatItem = { id: `timeout-${randomUUID()}`, kind: 'error', text: 'The Agent did not receive any response from the model provider for 60 seconds. The gateway may be slow, unstable, or unreachable — check that the base URL is reachable and the API key is valid, then try again.', time: Date.now() }
+      this.messages = [...this.messages, timeoutErr].slice(-MAX_ITEMS)
+      this.pushTrajectory({ ...timeoutErr, label: 'Request timed out' }, false)  // also to trajectory panel
+      this.emit()
+      void this.cancel().catch(() => undefined)
+    }, 5_000)
+    this.promptWatch = watch
+  }
+  private stopPromptWatch(): void {
+    if (!this.promptWatch) return
+    clearInterval(this.promptWatch.timer)
+    this.promptWatch = undefined
+  }
+  async cancel(): Promise<void> {
+    this.stopPromptWatch()
+    if (this.selectedSessionId) { await this.rpc('session.cancel', { sessionId: this.selectedSessionId }); this.running = false; this.emit() }
+  }
   async listCommands(): Promise<{ name: string; description: string; input?: { hint?: string; images?: boolean } }[]> {
     // Hardcoded built-in commands (same 6 registered by dsh-command-* packages)
     type Cmd = { name: string; description: string; input?: { hint?: string; images?: boolean } }
@@ -644,7 +740,6 @@ export class HostBridge {
           })
         }
       } catch { /* config read is best-effort */ }
-      const OPENAI_COMPAT_EFFORTS = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
       function detectProtocol(protocol: string | undefined, providerId: string, baseUrl: string | undefined, modelIds: string[]): string {
         if (protocol) return protocol
         const lowerId = providerId.toLowerCase()
@@ -673,8 +768,13 @@ export class HostBridge {
           const rawEfforts = Array.isArray(reasoning.efforts) ? reasoning.efforts.flatMap((effort) => isRecord(effort) && string(effort.id, 100) && string(effort.name, 100) ? [{ id: string(effort.id, 100)!, name: string(effort.name, 100)!, description: string(effort.description, 300) }] : []) : []
           const isOpenAI = protocol.includes('openai')
           const isAnthropic = protocol.includes('anthropic')
+          // Fallback efforts: show low/medium/high for OpenAI-compatible & Anthropic
+          // providers that DSH doesn't report native efforts for. These are displayed
+          // in the UI but MUST NOT be passed to session.selectModel (the caller
+          // checks effortsNative before attaching reasoningEffort).
+          const fallbackEfforts = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
           const useFallbackEfforts = rawEfforts.length === 0 && (isOpenAI || isAnthropic)
-          const efforts = useFallbackEfforts ? OPENAI_COMPAT_EFFORTS : rawEfforts
+          const efforts = useFallbackEfforts ? fallbackEfforts : rawEfforts
           const defaultEffort = string(reasoning.defaultEffort, 100) ?? (useFallbackEfforts ? 'medium' : undefined)
           return [{ id: modelId, name: modelName, description: string(model.description, 300), efforts, defaultEffort, effortsNative: !useFallbackEfforts }]
         }) }]
@@ -699,30 +799,107 @@ export class HostBridge {
             if (!mid || !mname) return []
             const isOpenAI = protocol.includes('openai')
             const isAnthropic = protocol.includes('anthropic')
+            const fallbackEfforts = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
             const useFallbackEfforts = isOpenAI || isAnthropic
-            const efforts = useFallbackEfforts ? OPENAI_COMPAT_EFFORTS : []
-            return [{ id: mid, name: mname, description: '', efforts, defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
+            // Fallback efforts show in UI but are NOT passed to session.selectModel —
+            // effortsNative=false signals callers to skip reasoningEffort attachment.
+            return [{ id: mid, name: mname, description: '', efforts: useFallbackEfforts ? fallbackEfforts : [], defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
           })
           if (providerModels.length) models.push({ id: groupId, name: groupName, models: providerModels })
         }
       } catch { /* best-effort */ }
       const permission = namespaces.find((entry) => entry.ns === 'permission'); const permissionValue = permission && isRecord(permission.value) ? permission.value : {}; const current = isRecord(sessionModels.current) ? sessionModels.current : undefined
-      return { available: true, writable: settingsValue.writable === true, providers: normalizedProviders, models, defaultPermission: string(permissionValue.defaultPreset, 100), permissionOptions: permission ? permissionOptions(permission.schema) : [], customProvider: customProviderCapability(namespaces, settingsValue.writable === true), selectedModel: current && string(current.provider, 120) && string(current.model, 160) ? { provider: string(current.provider, 120)!, model: string(current.model, 160)!, reasoningEffort: string(current.reasoningEffort, 100) } : undefined }
+      // Build selectedModel: prefer DSH session.current (authoritative for native-effort
+      // models); fall back to the per-model preference stored in config.json for
+      // fallback-effort providers (OpenAI-compatible) whose effort DSH never stores.
+      const currentProvider = current ? string(current.provider, 120) : undefined
+      const currentModel = current ? string(current.model, 160) : undefined
+      const baseReasoning = current ? string(current.reasoningEffort, 100) : undefined
+      let prefReasoning: string | undefined
+      try {
+        if (currentProvider && currentModel) prefReasoning = string(getConfig().modelPreferences?.[`${currentProvider}/${currentModel}`]?.reasoningEffort, 100)
+      } catch { /* ignore */ }
+      const finalReasoningEffort = baseReasoning ?? prefReasoning
+      return { available: true, writable: settingsValue.writable === true, providers: normalizedProviders, models, defaultPermission: string(permissionValue.defaultPreset, 100), permissionOptions: permission ? permissionOptions(permission.schema) : [], customProvider: customProviderCapability(namespaces, settingsValue.writable === true), selectedModel: currentProvider && currentModel ? { provider: currentProvider, model: currentModel, reasoningEffort: finalReasoningEffort } : undefined }
     } catch (error) { return { available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [], reason: 'Local Agent configuration is unavailable.' }, error: error instanceof Error ? error.message : 'Local Agent configuration is unavailable' } }
   }
   async getConfiguration(): Promise<AgentConfiguration> { return this.configuration() }
-  async selectModel(provider: string, model: string, reasoningEffort?: string): Promise<AgentConfiguration> {
-    if (!this.selectedSessionId) throw new Error('Choose a conversation first')
-    await this.rpc('session.selectModel', { sessionId: this.selectedSessionId, provider, model, ...(reasoningEffort && { reasoningEffort }) })
-    // Lightweight refresh: only fetch session.models for the current selection instead of full configuration
-    const sessionModels = await this.rpc<{ current?: unknown }>('session.models', { sessionId: this.selectedSessionId })
-    const current = isRecord(sessionModels.current) ? sessionModels.current : undefined
-    // Update just the selectedModel field on the cached config
-    const config = await this.configuration()
-    const selectedModel = current && string(current.provider, 120) && string(current.model, 160)
-      ? { provider: string(current.provider, 120)!, model: string(current.model, 160)!, reasoningEffort: string(current.reasoningEffort, 100) }
-      : config.selectedModel
-    return { ...config, selectedModel }
+  async selectModel(provider: string, model: string, explicitEffort?: string): Promise<AgentConfiguration> {
+    const isReasoningUnsupported = (err: unknown) => {
+      // rpc() throws plain Error with message containing the DSH envelope JSON, e.g.:
+      //   "Local Agent RPC rejected session.selectModel: {\"result\":{\"ok\":false,\"error\":{\"code\":\"model-unavailable\",\"message\":\"... does not support reasoning effort ...\"}}}"
+      if (!(err instanceof Error)) return false
+      const msg = err.message
+      return msg.includes('"code":"model-unavailable"') && msg.includes('reasoning effort')
+    }
+    const prefKey = `${provider}/${model}`
+    // Distinguish two intents:
+    //   • explicit effort change (3rd arg provided) → persist per-model preference
+    //   • plain model switch (3rd arg omitted)       → reuse the saved preference for THIS
+    //     model, and never overwrite it with a hardcoded default.
+    const explicit = explicitEffort !== undefined
+    let effectiveEffort: string | undefined
+    try {
+      const existingPrefs = getConfig().modelPreferences ?? {}
+      if (explicit) {
+        const nextPrefs = { ...existingPrefs }
+        if (explicitEffort) nextPrefs[prefKey] = { ...(nextPrefs[prefKey] ?? {}), reasoningEffort: explicitEffort }
+        await saveConfig({ modelPreferences: nextPrefs })
+        effectiveEffort = explicitEffort || undefined
+      } else {
+        effectiveEffort = string(existingPrefs[prefKey]?.reasoningEffort, 100)
+      }
+    } catch (err) {
+      console.warn('[narwhal] selectModel: modelPreferences update failed:', err instanceof Error ? err.message : String(err))
+      if (!explicit) effectiveEffort = undefined
+    }
+    // Step 1: If a session is selected, update its current model (session-scoped).
+    // DSH rejects effort for fallback providers → retry the model switch without it
+    // (the effort is still remembered locally in modelPreferences).
+    if (this.selectedSessionId) {
+      try {
+        await this.rpc('session.selectModel', { sessionId: this.selectedSessionId, provider, model, ...(effectiveEffort && { reasoningEffort: effectiveEffort }) })
+      } catch (err) {
+        if (effectiveEffort && isReasoningUnsupported(err)) {
+          console.warn('[narwhal] selectModel: DSH rejected reasoningEffort, retrying without (kept as local preference)')
+          await this.rpc('session.selectModel', { sessionId: this.selectedSessionId, provider, model })
+        } else throw err
+      }
+    }
+    // Step 2: Update DSH agent-default-model namespace (global default),
+    // gracefully dropping reasoningEffort if DSH rejects it.
+    try {
+      const descriptor = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
+      const namespaces = Array.isArray(descriptor.namespaces) ? descriptor.namespaces.filter(isRecord) : []
+      const existingDefaultNs = namespaces.find((ns) => ns.ns === 'agent-default-model')
+      const applyNs = async (nsRev: number) => {
+        const val: JsonRecord = { provider, model }
+        if (effectiveEffort) val.reasoningEffort = effectiveEffort
+        try {
+          await this.rpc('settings.mutate', { ns: 'agent-default-model', ops: [{ op: 'set', path: [], value: val }], expectedRevision: nsRev })
+        } catch (mutErr) {
+          if (effectiveEffort && isReasoningUnsupported(mutErr)) {
+            await this.rpc('settings.mutate', { ns: 'agent-default-model', ops: [{ op: 'set', path: [], value: { provider, model } as JsonRecord }], expectedRevision: nsRev })
+          } else throw mutErr
+        }
+      }
+      if (existingDefaultNs && typeof existingDefaultNs.revision === 'number') {
+        await applyNs(existingDefaultNs.revision)
+      } else {
+        const anyNsRev = namespaces.find((ns) => typeof ns.revision === 'number')?.revision as number | undefined
+        if (anyNsRev !== undefined) await applyNs(anyNsRev)
+      }
+    } catch (err) {
+      console.warn('[narwhal] selectModel: settings.mutate failed:', err instanceof Error ? err.message : String(err))
+    }
+    // Step 3: Remember the active model (+its effective effort) for startup default.
+    try {
+      await saveConfig({ defaultModel: { provider, model, ...(effectiveEffort ? { reasoningEffort: effectiveEffort } : {}) } })
+    } catch (err) {
+      console.warn('[narwhal] selectModel: saveConfig defaultModel failed:', err instanceof Error ? err.message : String(err))
+    }
+    // Step 4: configuration() merges DSH session effort + the per-model preference.
+    return this.configuration()
   }
   async setDefaultPermission(preset: string): Promise<AgentConfiguration> { const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable'); const descriptor = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const permission = Array.isArray(descriptor.namespaces) ? descriptor.namespaces.find((item) => isRecord(item) && item.ns === 'permission') : undefined; if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable'); await this.rpc('settings.mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration() }
   async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> {
@@ -769,7 +946,7 @@ export class HostBridge {
     // Pre-validate inputs locally before touching the runtime so an invalid
     // base URL or model ID fails without a round-trip.
     let baseUrl: string | undefined
-    let models: { id: string; name: string }[] | undefined
+    let modelIds: string[] | undefined
     if (input.baseUrl !== undefined) {
       const trimmed = input.baseUrl.trim()
       const url = new URL(trimmed)
@@ -777,21 +954,27 @@ export class HostBridge {
       baseUrl = trimmed
     }
     if (input.modelIds !== undefined) {
-      const modelIds = input.modelIds.map((m) => m.trim()).filter(Boolean)
-      if (!modelIds.length) throw new Error('At least one model ID is required')
-      modelIds.forEach((modelId) => { if (!validModelId(modelId)) throw new Error(`Model ID "${modelId}" is invalid`) })
-      models = modelIds.map((modelId) => ({ id: modelId, name: modelId }))
+      const trimmed = input.modelIds.map((m) => m.trim()).filter(Boolean)
+      if (!trimmed.length) throw new Error('At least one model ID is required')
+      trimmed.forEach((modelId) => { if (!validModelId(modelId)) throw new Error(`Model ID "${modelId}" is invalid`) })
+      modelIds = trimmed
     }
-    if (baseUrl === undefined && models === undefined) return this.configuration()
+    if (baseUrl === undefined && modelIds === undefined) return this.configuration()
     const resolved = await this.resolveProviderNsPath(providerId)
     if (!resolved) throw new Error('Provider settings are unavailable')
     const { ns, path } = resolved
     const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
     const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
     if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
+    // Protocol comes from the existing stored profile (the edit form doesn't
+    // resend it). Custom providers are openai-completions unless configured
+    // otherwise — reasoning levels are only declared for the openai family.
+    const existingApi = (getConfig().providers?.[providerId] as { api?: unknown } | undefined)?.api ?? 'openai-completions'
+    const dshModels = modelIds ? modelsForDsh(modelIds, existingApi) : undefined
+    const configModels = modelIds ? modelsForConfig(modelIds, existingApi) : undefined
     const ops: { op: 'set'; path: string[]; value: unknown }[] = []
     if (baseUrl !== undefined) ops.push({ op: 'set', path: [...path, 'baseURL'], value: baseUrl })
-    if (models !== undefined) ops.push({ op: 'set', path: [...path, 'models'], value: models })
+    if (dshModels !== undefined) ops.push({ op: 'set', path: [...path, 'models'], value: dshModels })
     await this.rpc('settings.mutate', { ns, ops, expectedRevision: section.revision })
     // Persist to config.json
     try {
@@ -800,7 +983,7 @@ export class HostBridge {
       const existing = currentProviders[providerId] ?? {}
       const merged: JsonRecord = { ...(existing as JsonRecord) }
       if (baseUrl !== undefined) merged.baseURL = baseUrl
-      if (models !== undefined) merged.models = models
+      if (configModels !== undefined) merged.models = configModels
       currentProviders[providerId] = merged
       await saveConfig({ providers: currentProviders })
     } catch (err) { console.warn('[narwhal] updateProvider: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
@@ -951,8 +1134,11 @@ export class HostBridge {
     // key yet. This lets DSH's pi-ai plugin register an adapter for this
     // route so session.selectModel and session.prompt work; the actual
     // request will fail auth naturally when no credential is configured.
-    const models = modelIds.map((modelId) => ({ id: modelId, name: modelId }))
-    const profile: JsonRecord = { baseURL: baseUrl, api: protocol, models }
+    // DSH pi-ai needs reasoning levels as a dict to actually send
+    // reasoning_effort upstream; config.json keeps Narwhal's enum-array shape.
+    const dshModels = modelsForDsh(modelIds, protocol)
+    const configModels = modelsForConfig(modelIds, protocol)
+    const profile: JsonRecord = { baseURL: baseUrl, api: protocol, models: dshModels }
     if (displayName) profile.displayName = displayName
     const credentialRef = credentialRefFor(id, profile)
     if (!credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')
@@ -965,7 +1151,8 @@ export class HostBridge {
     // Step 10: Persist to config.json (authoritative store for Narwhal)
     try {
       const cfg = getConfig()
-      await saveConfig({ providers: { ...(cfg.providers ?? {}), [id]: profile } })
+      const configProfile: JsonRecord = { ...profile, models: configModels }
+      await saveConfig({ providers: { ...(cfg.providers ?? {}), [id]: configProfile } })
     } catch (err) {
       console.warn('[narwhal] createProvider: saveConfig failed:', err instanceof Error ? err.message : String(err))
     }

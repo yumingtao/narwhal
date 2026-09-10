@@ -155,8 +155,16 @@ export const configSchema = z.object({
   defaultModel: z.object({
     provider: z.string().min(1),
     model: z.string().min(1),
-    reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+    reasoningEffort: z.string().optional(),
   }).optional(),
+
+  // Per-model UI preferences, keyed by `${provider}/${model}`. Local-only —
+  // NOT synced to DSH. Remembers the user's chosen reasoning effort for each
+  // model independently, including fallback-effort (OpenAI-compatible) models
+  // whose effort DSH refuses to store. Switching models never overwrites this.
+  modelPreferences: z.record(z.string(), z.object({
+    reasoningEffort: z.string().optional(),
+  })).optional().default({}),
 
   agent: z.object({
     preset: z.enum(AGENT_PRESETS).optional().default('standard'),
@@ -187,6 +195,7 @@ export const defaultConfig: NarwhalConfig = {
   version: CONFIG_VERSION,
   theme: 'auto',
   providers: {},
+  modelPreferences: {},
   agent: {
     preset: 'standard',
     permissionLevel: 'workspace-write',

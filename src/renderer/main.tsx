@@ -818,7 +818,6 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const [permMenuOpen, setPermMenuOpen] = useState(false)
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
   const [effortMenuOpen, setEffortMenuOpen] = useState(false)
-  const [fallbackEffort, setFallbackEffort] = useState<string | undefined>(undefined)
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [commands, setCommands] = useState<readonly Command[]>([])
   const [commandOpen, setCommandOpen] = useState(false)
@@ -970,21 +969,18 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
   const selected = configuration.selectedModel
   const provider = groups.find((item) => item.id === selected?.provider) ?? groups.find((item) => item.models.length > 0)
   const model = provider?.models.find((item) => item.id === selected?.model) ?? provider?.models[0]
-  const isFallbackEfforts = !!model && !model.effortsNative
-  const effort = isFallbackEfforts
-    ? (fallbackEffort ?? model?.defaultEffort ?? model?.efforts[0]?.id ?? '')
-    : (model?.efforts.some((item) => item.id === selected?.reasoningEffort)
-      ? selected?.reasoningEffort ?? ''
-      : model?.defaultEffort ?? model?.efforts[0]?.id ?? '')
+  // selectedModel.reasoningEffort is authoritative for BOTH native (DSH-stored) and
+  // fallback (per-model preference merged by hostBridge from config.json). Fall back
+  // to the model's own default only when no valid saved selection is present.
+  const effort = model?.efforts.some((item) => item.id === selected?.reasoningEffort)
+    ? selected?.reasoningEffort ?? ''
+    : model?.defaultEffort ?? model?.efforts[0]?.id ?? ''
   const currentEffort = model?.efforts.find((e) => e.id === effort)
 
-  const handleModelSelect = (providerId: string, modelId: string, modelEffort?: string) => {
-    const selectedGroup = groups.find((g) => g.id === providerId)
-    const selectedModelData = selectedGroup?.models.find((m) => m.id === modelId)
-    const supportsNativeEfforts = !!selectedModelData?.effortsNative
-    void selectModel({ provider: providerId, model: modelId, ...(supportsNativeEfforts && modelEffort ? { reasoningEffort: modelEffort } : {}) })
-    // Reset fallback effort state when switching models
-    setFallbackEffort(undefined)
+  // Switching model never sends a reasoningEffort: the host reuses that model's saved
+  // per-model preference (or its default). Only choosing an effort explicitly persists one.
+  const handleModelSelect = (providerId: string, modelId: string) => {
+    void selectModel({ provider: providerId, model: modelId })
     setModelMenuOpen(false)
   }
   
@@ -1172,7 +1168,6 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                           <div className="model-provider-title">{group.name}</div>
                           {group.models.map((m) => {
                             const isActive = group.id === provider?.id && m.id === model?.id
-                            const defaultEffort = m.defaultEffort ?? m.efforts[0]?.id
                             return (
                               <div key={`${group.id}-${m.id}`} className="model-entry">
                                 <button
@@ -1180,7 +1175,7 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                                   role="menuitemradio"
                                   aria-checked={isActive}
                                   className={`menu-item model-menu-item ${isActive ? 'active' : ''}`}
-                                  onClick={() => handleModelSelect(group.id, m.id, defaultEffort)}
+                                  onClick={() => handleModelSelect(group.id, m.id)}
                                 >
                                   <span className="selector-item-label">{m.name}</span>
                                   {isActive && <span className="menu-check">✓</span>}
@@ -1228,13 +1223,10 @@ function Composer({ running, configuration, hasSession, selectModel, selectPermi
                           aria-checked={eff.id === effort}
                           className={`menu-item ${eff.id === effort ? 'active' : ''}`}
                           onClick={() => {
-                            if (isFallbackEfforts) {
-                              setFallbackEffort(eff.id)
-                              setEffortMenuOpen(false)
-                            } else {
-                              void selectModel({ provider: provider?.id ?? '', model: model.id, reasoningEffort: eff.id })
-                              setEffortMenuOpen(false)
-                            }
+                            // Persist for both native and fallback providers — the host
+                            // stores it per model and degrades gracefully if DSH rejects it.
+                            void selectModel({ provider: provider?.id ?? '', model: model.id, reasoningEffort: eff.id })
+                            setEffortMenuOpen(false)
                           }}
                         >
                           <span className="selector-item-label">{eff.name}</span>
@@ -1277,12 +1269,13 @@ function DeliverableDialog({ close, save }: { close: () => void; save: (path: st
 function Dialog({ title, children, close }: { title: string; children: ReactNode; close: () => void }) { return <div className="modal" role="dialog" aria-modal="true"><form className="dialog" onSubmit={(event) => event.preventDefault()}><div><h2>{title}</h2><button className="close-dialog" onClick={close}><Icon name="close"/></button></div>{children}</form></div> }
 function SettingsDialog({ settings, agent, theme, setTheme, lang, setLang, close, restart, initialTab }: { settings: DesktopSettings; agent: AgentSnapshot; theme: ThemeMode; setTheme: (t: ThemeMode) => void; lang: Lang; setLang: (l: Lang) => void; close: () => void; restart: () => void; initialTab?: SettingsTab }) {
   const [tab, setTab] = useState(initialTab ?? 'models')
+  const [initialProviderId, setInitialProviderId] = useState<string | undefined>(undefined)
   useEffect(() => { if (initialTab) setTab(initialTab) }, [initialTab])
   const [configuration, setConfiguration] = useState<AgentConfiguration>({ available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [] } })
   const [message, setMessage] = useState<{ text: string; kind: 'success' | 'error' } | null>(null)
   const load = async () => { try { setMessage(null); setConfiguration(await api.getAgentConfiguration()) } catch { setMessage({ text: 'Unable to load local Agent settings.', kind: 'error' }) } }
   useEffect(() => { void load() }, [])
-  const update = async (operation: () => Promise<AgentConfiguration>, notice = 'Saved locally.') => { try { setMessage(null); setConfiguration(await operation()); if (notice) setMessage({ text: notice, kind: 'success' }) } catch { setMessage({ text: 'The local Agent rejected that setting. Nothing was changed.', kind: 'error' }) } }
+  const update = async (operation: () => Promise<AgentConfiguration>, notice = 'Saved locally.') => { try { setMessage(null); setConfiguration(await operation()); if (notice) setMessage({ text: notice, kind: 'success' }) } catch (err) { console.error('[narwhal] Settings update failed:', err); setMessage({ text: `The local Agent rejected that setting. ${err instanceof Error ? err.message : String(err)}`, kind: 'error' }) } }
   const createProvider = async (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => { try { setMessage(null); const result = await api.createProvider(input); setConfiguration(result.configuration); setMessage({ text: result.keyStored ? 'Provider created locally.' : 'Provider was created, but the API key was rejected. Add the key from its provider row.', kind: 'success' }); return true } catch (error) { setMessage({ text: error instanceof Error ? error.message : 'The local Agent rejected this provider. Nothing was created.', kind: 'error' }); return false } }
   const navigation: ReadonlyArray<{ readonly id: typeof tab; readonly label: string; readonly icon: IconName; readonly group: string }> = [
     { id: 'models', label: t('settings.tab.models'), icon: 'model', group: t('settings.group.agent') },
@@ -1303,7 +1296,7 @@ function SettingsDialog({ settings, agent, theme, setTheme, lang, setLang, close
   const groupOrder = [t('settings.group.agent'), t('settings.group.integrations'), t('settings.group.system')]
   const selectTab = (next: typeof tab) => { setTab(next); document.getElementById(`settings-tab-${next}`)?.focus() }
   const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => { const index = navigation.findIndex((item) => item.id === tab); const key = event.key; const nextIndex = key === 'ArrowDown' || key === 'ArrowRight' ? (index + 1) % navigation.length : key === 'ArrowUp' || key === 'ArrowLeft' ? (index - 1 + navigation.length) % navigation.length : key === 'Home' ? 0 : key === 'End' ? navigation.length - 1 : undefined; if (nextIndex === undefined) return; event.preventDefault(); selectTab(navigation[nextIndex].id) }
-  return <div className="modal" role="dialog" aria-modal="true" aria-label={t('settings.title')}><section className="settings-dialog"><header className="settings-head"><div><p>{t('settings.localWorkbench')}</p><h2>{t('settings.title')}</h2></div><button className="close-dialog" aria-label={t('settings.close')} onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label={t('settings.sectionsAria')} role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className={`settings-notice ${message.kind}`} role="status">{message.text}</p>}{!configuration.available && tab !== 'runtime' && tab !== 'theme' && tab !== 'mcp' && tab !== 'plugins' && tab !== 'skills' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={() => selectTab('models')}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : tab === 'mcp' ? <McpServersTab/> : tab === 'plugins' ? <PluginsTab/> : tab === 'skills' ? <SkillsTab/> : tab === 'theme' ? <ThemeSettings theme={theme} setTheme={setTheme} lang={lang} setLang={setLang}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
+  return <div className="modal" role="dialog" aria-modal="true" aria-label={t('settings.title')}><section className="settings-dialog"><header className="settings-head"><div><p>{t('settings.localWorkbench')}</p><h2>{t('settings.title')}</h2></div><button className="close-dialog" aria-label={t('settings.close')} onClick={close}><Icon name="close"/></button></header><div className="settings-body"><nav className="settings-nav" aria-label={t('settings.sectionsAria')} role="tablist" aria-orientation="vertical">{groupOrder.map((groupName) => <div key={groupName} className="settings-nav-group"><div className="settings-nav-group-title">{groupName}</div>{groupedNavigation[groupName]?.map((item) => <button id={`settings-tab-${item.id}`} key={item.id} role="tab" aria-selected={tab === item.id} aria-controls={`settings-panel-${item.id}`} tabIndex={tab === item.id ? 0 : -1} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)} onKeyDown={onTabKeyDown}><Icon name={item.icon}/><span>{item.label}</span></button>)}</div>)}</nav><div id={`settings-panel-${tab}`} className="settings-content" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} tabIndex={0}>{message && <p className={`settings-notice ${message.kind}`} role="status">{message.text}</p>}{!configuration.available && tab !== 'runtime' && tab !== 'theme' && tab !== 'mcp' && tab !== 'plugins' && tab !== 'skills' ? <p className="settings-empty">{configuration.error ?? 'This local Agent does not expose its settings plane.'}</p> : tab === 'models' ? <ModelSettings configuration={configuration} update={update} initialProviderId={initialProviderId}/> : tab === 'providers' ? <ProviderSettings configuration={configuration} update={update} create={createProvider} openModels={(providerId: string) => { setInitialProviderId(providerId); selectTab('models') }}/> : tab === 'permissions' ? <PermissionSettings configuration={configuration} update={update}/> : tab === 'mcp' ? <McpServersTab/> : tab === 'plugins' ? <PluginsTab/> : tab === 'skills' ? <SkillsTab/> : tab === 'theme' ? <ThemeSettings theme={theme} setTheme={setTheme} lang={lang} setLang={setLang}/> : <RuntimeSettings settings={settings} agent={agent} restart={restart}/>}</div></div></section></div>
 }
 function ThemeSettings({ theme, setTheme, lang, setLang }: { theme: ThemeMode; setTheme: (t: ThemeMode) => void; lang: Lang; setLang: (l: Lang) => void }) {
   const themeOptions: ReadonlyArray<{ readonly id: ThemeMode; readonly label: string; readonly description: string }> = [
@@ -1339,8 +1332,21 @@ function ThemeSettings({ theme, setTheme, lang, setLang }: { theme: ThemeMode; s
     </div>
   </section>
 }
-function ModelSettings({ configuration, update }: { configuration: AgentConfiguration; update: (operation: () => Promise<AgentConfiguration>, notice?: string) => void }) { const current = configuration.selectedModel; const provider = configuration.models.find((item) => item.id === current?.provider) ?? configuration.models[0]; const model = provider?.models.find((item) => item.id === current?.model) ?? provider?.models[0]; const currentMatches = current?.provider === provider?.id && current?.model === model?.id; const effort = currentMatches ? current?.reasoningEffort ?? model?.defaultEffort ?? '' : model?.defaultEffort ?? ''; const select = (nextProvider: AgentConfiguration['models'][number], nextModel: AgentConfiguration['models'][number]['models'][number], nextEffort?: string) => update(() => api.selectAgentModel({ provider: nextProvider.id, model: nextModel.id, ...(nextEffort && { reasoningEffort: nextEffort }) }), ''); return <section className="settings-page model-settings"><div className="active-model-heading"><p>{t('settings.models.activeModel')}</p><small>{t('settings.models.activeModelSub')}</small></div>{provider && model ? <div className="model-controls"><label>{t('settings.models.provider')}<select value={provider.id} onChange={(event) => { const nextProvider = configuration.models.find((item) => item.id === event.target.value); const nextModel = nextProvider?.models[0]; if (nextProvider && nextModel) select(nextProvider, nextModel, nextModel.defaultEffort) }}>{configuration.models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>{t('settings.models.model')}<select value={model.id} onChange={(event) => { const nextModel = provider.models.find((item) => item.id === event.target.value); if (nextModel) select(provider, nextModel, nextModel.defaultEffort) }}>{provider.models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{model.efforts.length ? <label>{t('settings.models.reasoningEffort')}<select value={effort} onChange={(event) => select(provider, model, event.target.value || undefined)}>{model.efforts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}</div> : <p className="settings-empty">{t('settings.models.noneAvailable')}</p>}</section> }
-function ProviderSettings({ configuration, update, create, openModels }: { configuration: AgentConfiguration; update: (operation: () => Promise<AgentConfiguration>) => void; create: (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => Promise<boolean>; openModels: () => void }) { const [adding, setAdding] = useState(false); const capability = configuration.customProvider; return <section className="settings-page providers-page"><div className="settings-page-intro"><p>{t('settings.providers.wroteOnly')}</p>{!adding && <button type="button" className="add-provider" title={capability.available ? t('settings.providers.add') : capability.reason} disabled={!capability.available} onClick={() => setAdding(true)}><Icon name="plus"/>{t('settings.providers.add')}</button>}</div>{adding && <CreateProviderForm protocols={capability.protocols} close={() => setAdding(false)} submit={async (input) => { const created = await create(input); if (created) setAdding(false); return created }}/>} {configuration.providers.length ? <div className="provider-list">{configuration.providers.map((provider) => <ProviderRow key={provider.id} provider={provider} update={update} models={configuration.models.find((group) => group.id === provider.id)?.models ?? []} openModels={openModels} onDelete={() => update(() => api.deleteProvider(provider.id))}/>)}</div> : <p className="settings-empty">{t('settings.providers.noneAvailable')}</p>}{!capability.available && <p className="provider-hint"><Icon name="info"/>{capability.reason ?? t('settings.providers.notAvailable')}</p>}</section> }
+function ModelSettings({ configuration, update, initialProviderId }: { configuration: AgentConfiguration; update: (operation: () => Promise<AgentConfiguration>, notice?: string) => void; initialProviderId?: string }) {
+  const current = configuration.selectedModel
+  // Determine initial provider: prefer initialProviderId (from "Select model" button),
+  // fall back to current session's provider, then first available
+  const provider = (initialProviderId ? configuration.models.find((item) => item.id === initialProviderId) : undefined)
+    ?? configuration.models.find((item) => item.id === current?.provider)
+    ?? configuration.models[0]
+  const model = provider?.models.find((item) => item.id === current?.model) ?? provider?.models[0]
+  const currentMatches = current?.provider === provider?.id && current?.model === model?.id
+  const effort = currentMatches ? current?.reasoningEffort ?? model?.defaultEffort ?? '' : model?.defaultEffort ?? ''
+  const select = (nextProvider: AgentConfiguration['models'][number], nextModel: AgentConfiguration['models'][number]['models'][number], nextEffort?: string) =>
+    update(() => api.selectAgentModel({ provider: nextProvider.id, model: nextModel.id, ...(nextEffort ? { reasoningEffort: nextEffort } : {}) }), '')
+  return <section className="settings-page model-settings"><div className="active-model-heading"><p>{t('settings.models.activeModel')}</p><small>{t('settings.models.activeModelSub')}</small></div>{provider && model ? <div className="model-controls"><label>{t('settings.models.provider')}<select value={provider.id} onChange={(event) => { const nextProvider = configuration.models.find((item) => item.id === event.target.value); const nextModel = nextProvider?.models[0]; if (nextProvider && nextModel) select(nextProvider, nextModel) }}>{configuration.models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label>{t('settings.models.model')}<select value={model.id} onChange={(event) => { const nextModel = provider.models.find((item) => item.id === event.target.value); if (nextModel) select(provider, nextModel) }}>{provider.models.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>{model.efforts.length ? <label>{t('settings.models.reasoningEffort')}<select value={effort} onChange={(event) => select(provider, model, event.target.value || undefined)}>{model.efforts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label> : null}</div> : <p className="settings-empty">{t('settings.models.noneAvailable')}</p>}</section>
+}
+function ProviderSettings({ configuration, update, create, openModels }: { configuration: AgentConfiguration; update: (operation: () => Promise<AgentConfiguration>) => void; create: (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => Promise<boolean>; openModels: (providerId: string) => void }) { const [adding, setAdding] = useState(false); const capability = configuration.customProvider; return <section className="settings-page providers-page"><div className="settings-page-intro"><p>{t('settings.providers.wroteOnly')}</p>{!adding && <button type="button" className="add-provider" title={capability.available ? t('settings.providers.add') : capability.reason} disabled={!capability.available} onClick={() => setAdding(true)}><Icon name="plus"/>{t('settings.providers.add')}</button>}</div>{adding && <CreateProviderForm protocols={capability.protocols} close={() => setAdding(false)} submit={async (input) => { const created = await create(input); if (created) setAdding(false); return created }}/>} {configuration.providers.length ? <div className="provider-list">{configuration.providers.map((provider) => <ProviderRow key={provider.id} provider={provider} update={update} models={configuration.models.find((group) => group.id === provider.id)?.models ?? []} openModels={openModels} onDelete={() => update(() => api.deleteProvider(provider.id))}/>)}</div> : <p className="settings-empty">{t('settings.providers.noneAvailable')}</p>}{!capability.available && <p className="provider-hint"><Icon name="info"/>{capability.reason ?? t('settings.providers.notAvailable')}</p>}</section> }
 function CreateProviderForm({ protocols, close, submit }: { protocols: readonly string[]; close: () => void; submit: (input: { id: string; displayName?: string; baseUrl: string; protocol: string; modelIds: readonly string[]; apiKey?: string }) => Promise<boolean> }) {
   const [id, setId] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -1356,7 +1362,7 @@ function CreateProviderForm({ protocols, close, submit }: { protocols: readonly 
   const ready = id.trim() && baseUrl.trim() && protocol && validModelIds.length > 0
   return <form className="provider-create" onSubmit={(event) => { event.preventDefault(); if (!ready || saving) return; setSaving(true); void submit({ id: id.trim(), ...(displayName.trim() && { displayName: displayName.trim() }), baseUrl: baseUrl.trim(), protocol, modelIds: validModelIds, ...(apiKey.trim() && { apiKey: apiKey.trim() }) }).then((created) => { if (created) { setApiKey(''); setModelIds(['']) } setSaving(false) }) }}><header className="provider-create-title"><div><strong>{t('settings.providers.newCustom')}</strong><small>{t('settings.providers.newCustomHint')}</small></div><button type="button" className="close-provider-create" aria-label={t('settings.providers.closeFormAria')} title={t('settings.providers.closeFormAria')} onClick={close}><Icon name="close"/></button></header><div className="provider-fields"><label>{t('settings.providers.providerId')}<input value={id} onChange={(event) => setId(event.target.value)} placeholder={t('settings.providers.providerIdPlaceholder')} autoCapitalize="none" autoCorrect="off"/></label><label>{t('settings.providers.displayName')}<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder={t('settings.providers.displayNamePlaceholder')}/></label><label className="provider-wide">{t('settings.providers.baseUrl')}<input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={t('settings.providers.baseUrlPlaceholder')} inputMode="url"/></label><label>{t('settings.providers.apiProtocol')}<select value={protocol} onChange={(event) => setProtocol(event.target.value)}>{protocols.map((option) => <option key={option} value={option}>{option}</option>)}</select></label><label className="provider-wide">{t('settings.providers.modelIds')}<div className="model-ids-list">{modelIds.map((modelId, index) => <div key={index} className="model-id-row"><input value={modelId} onChange={(event) => updateModelId(index, event.target.value)} placeholder={t('settings.providers.modelPlaceholder')} autoCapitalize="none" autoCorrect="off"/>{modelIds.length > 1 && <button type="button" className="remove-model" onClick={() => removeModelId(index)} aria-label={t('settings.providers.removeModelAria', { index: index + 1 })}>×</button>}</div>)}</div><button type="button" className="add-model-btn" onClick={addModelId} disabled={modelIds.filter((m) => m.trim()).length === 0 && modelIds.length > 1}>{t('settings.providers.addAnotherModel')}</button></label><label className="provider-wide">{t('settings.providers.apiKeyOptional')}<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t('settings.providers.apiKeyPlaceholder')}/></label></div><div className="provider-create-actions"><span>{t('settings.providers.providerIdImmutable')}</span><button type="submit" className="primary" disabled={!ready || saving}>{saving ? t('settings.providers.creating') : t('settings.providers.createProvider')}</button></div></form>
 }
-function ProviderRow({ provider, update, models, openModels, onDelete }: { provider: AgentConfiguration['providers'][number]; update: (operation: () => Promise<AgentConfiguration>) => void; models: readonly AgentConfiguration['models'][number]['models'][number][]; openModels: () => void; onDelete: () => void }) {
+function ProviderRow({ provider, update, models, openModels, onDelete }: { provider: AgentConfiguration['providers'][number]; update: (operation: () => Promise<AgentConfiguration>) => void; models: readonly AgentConfiguration['models'][number]['models'][number][]; openModels: (providerId: string) => void; onDelete: () => void }) {
   const [expanded, setExpanded] = useState(false)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
   const [key, setKey] = useState('')
@@ -1408,7 +1414,7 @@ function ProviderRow({ provider, update, models, openModels, onDelete }: { provi
           {provider.apiKeyConfigured ? t('settings.providers.configured') : t('settings.providers.needsKey')}
         </span>
         <span className="provider-row-model-count">{modelLabel}</span>
-        <button type="button" className="provider-row-btn" onClick={openModels} disabled={!modelCount}>{t('settings.providers.selectModel')}</button>
+        <button type="button" className="provider-row-btn" onClick={() => openModels(provider.id)} disabled={!modelCount}>{t('settings.providers.selectModel')}</button>
         {hasConfig && <button type="button" className="provider-row-btn configure" onClick={() => setExpanded(!expanded)}>{expanded ? t('settings.providers.done') : t('settings.providers.configure')}</button>}
         <button type="button" className="provider-row-btn delete" onClick={() => { if (window.confirm(t('settings.providers.deleteConfirm', { name: provider.name }))) onDelete() }} title={t('settings.providers.deleteTitle')} aria-label={`${t('settings.providers.delete')} ${provider.name}`}>{t('settings.providers.delete')}</button>
       </div>
