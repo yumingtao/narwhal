@@ -269,7 +269,7 @@ Edit `config.json` (or use the in-app Settings UI), then restart Narwhal for cha
       "serverName": "filesystem",
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/YMINGTA/projects"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/projects"],
       "toolCallTimeoutMs": 60000,
       "failOnStartupError": false
     },

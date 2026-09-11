@@ -267,7 +267,7 @@ Narwhal 使用单一权威配置文件，每次启动前同步到 DSH runtime。
       "serverName": "filesystem",
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/YMINGTA/projects"],
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/projects"],
       "toolCallTimeoutMs": 60000,
       "failOnStartupError": false
     },
