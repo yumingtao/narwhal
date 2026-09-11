@@ -662,12 +662,14 @@ const _mockBridge = Object.freeze({
       baseUrl: input.baseUrl,
       protocol,
     }
-    const openaiEfforts = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
+    const fallbackEfforts = protocol === 'anthropic'
+      ? [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
+      : [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }, { id: 'xhigh', name: 'Xhigh' }, { id: 'max', name: 'Max' }]
     const supportsFallbackEfforts = protocol === 'openai' || protocol === 'anthropic'
     const models = input.modelIds.map((modelId) => ({
       id: modelId,
       name: modelId,
-      efforts: supportsFallbackEfforts ? openaiEfforts : [] as Array<{ id: string; name: string }>,
+      efforts: supportsFallbackEfforts ? fallbackEfforts : [] as Array<{ id: string; name: string }>,
       defaultEffort: supportsFallbackEfforts ? 'medium' as string | undefined : undefined as string | undefined,
       effortsNative: false,
     }))

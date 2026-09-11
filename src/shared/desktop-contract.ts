@@ -19,7 +19,7 @@ export interface NarwhalConfig {
   readonly theme: ThemeMode
   readonly language?: 'en' | 'zh'
   readonly defaultModel?: string
-  readonly defaultEffort: 'low' | 'medium' | 'high'
+  readonly defaultEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   readonly agentMode: string
   readonly permissionLevel: string
   readonly providers: ReadonlyRecord<string, ProviderConfig>

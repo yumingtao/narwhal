@@ -27,7 +27,7 @@ const modelProfileSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).optional(),
   input: z.array(z.enum(['text', 'image'])).optional(),
-  reasoningEfforts: z.array(z.enum(['low', 'medium', 'high'])).optional(),
+  reasoningEfforts: z.array(z.enum(['low', 'medium', 'high', 'xhigh', 'max'])).optional(),
   compat: z.record(z.string(), z.any()).optional(),
   maxTokens: z.number().positive().optional(),
   contextWindow: z.number().positive().optional(),

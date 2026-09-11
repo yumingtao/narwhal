@@ -39,17 +39,30 @@ function trajectoryFor(event: JsonRecord, type: string): { readonly label: strin
 }
 function validId(value: unknown): string | undefined { const id = string(value, 140); return id && /^[A-Za-z0-9._:-]+$/u.test(id) ? id : undefined }
 
-// Custom OpenAI-compatible providers advertise low/medium/high reasoning by
-// default. DSH's pi-ai settings schema stores them as a level→wire-spelling
-// dict; Narwhal's own config schema stores a plain enum array.
-const OPENAI_REASONING_LEVELS = ['low', 'medium', 'high'] as const
+// Custom OpenAI-compatible providers advertise pi-ai's full five-level
+// reasoning ladder by default (low/medium/high/xhigh/max). DSH's pi-ai
+// settings schema stores them as a level→wire-spelling dict; Narwhal's own
+// config schema stores a plain enum array. xhigh/max exist in pi-ai but stay
+// unsupported unless a model profile explicitly declares them.
+const OPENAI_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+type OpenAiReasoningLevel = (typeof OPENAI_REASONING_LEVELS)[number]
+// Anthropic's extended-thinking mapping only covers the three base levels.
+const ANTHROPIC_REASONING_LEVELS = ['low', 'medium', 'high'] as const
 function isOpenAiProtocol(api: unknown): boolean { return typeof api === 'string' && api.includes('openai') }
+function reasoningLevelName(id: string): string { return `${id.charAt(0).toUpperCase()}${id.slice(1)}` }
 function dshReasoningEfforts(): Record<string, string> { return Object.fromEntries(OPENAI_REASONING_LEVELS.map((level) => [level, level])) }
+// Efforts shown for models DSH reports no native reasoning metadata for.
+// Names mirror pi-ai's own capitalization (xhigh → "Xhigh", max → "Max").
+function fallbackReasoningEfforts(protocol: string): { id: string, name: string }[] {
+  if (protocol.includes('anthropic')) return ANTHROPIC_REASONING_LEVELS.map((id) => ({ id, name: reasoningLevelName(id) }))
+  if (protocol.includes('openai')) return OPENAI_REASONING_LEVELS.map((id) => ({ id, name: reasoningLevelName(id) }))
+  return []
+}
 function modelsForDsh(modelIds: readonly string[], api: unknown): JsonRecord[] {
   const reasoning = isOpenAiProtocol(api)
   return modelIds.map((id) => reasoning ? { id, name: id, reasoningEfforts: dshReasoningEfforts() } : { id, name: id })
 }
-function modelsForConfig(modelIds: readonly string[], api: unknown): { id: string; name: string; reasoningEfforts?: ('low' | 'medium' | 'high')[] }[] {
+function modelsForConfig(modelIds: readonly string[], api: unknown): { id: string; name: string; reasoningEfforts?: OpenAiReasoningLevel[] }[] {
   const reasoning = isOpenAiProtocol(api)
   return modelIds.map((id) => reasoning ? { id, name: id, reasoningEfforts: [...OPENAI_REASONING_LEVELS] } : { id, name: id })
 }
@@ -768,12 +781,13 @@ export class HostBridge {
           const rawEfforts = Array.isArray(reasoning.efforts) ? reasoning.efforts.flatMap((effort) => isRecord(effort) && string(effort.id, 100) && string(effort.name, 100) ? [{ id: string(effort.id, 100)!, name: string(effort.name, 100)!, description: string(effort.description, 300) }] : []) : []
           const isOpenAI = protocol.includes('openai')
           const isAnthropic = protocol.includes('anthropic')
-          // Fallback efforts: show low/medium/high for OpenAI-compatible & Anthropic
-          // providers that DSH doesn't report native efforts for. These are displayed
-          // in the UI but MUST NOT be passed to session.selectModel (the caller
-          // checks effortsNative before attaching reasoningEffort).
-          const fallbackEfforts = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
+          // Fallback efforts: when DSH reports no native reasoning metadata,
+          // OpenAI-compatible models get the full five-level ladder and
+          // Anthropic models low/medium/high. Displayed in the UI; the host
+          // persists the pick per model and degrades gracefully if DSH
+          // rejects session.selectModel with an effort the model lacks.
           const useFallbackEfforts = rawEfforts.length === 0 && (isOpenAI || isAnthropic)
+          const fallbackEfforts = useFallbackEfforts ? fallbackReasoningEfforts(protocol) : []
           const efforts = useFallbackEfforts ? fallbackEfforts : rawEfforts
           const defaultEffort = string(reasoning.defaultEffort, 100) ?? (useFallbackEfforts ? 'medium' : undefined)
           return [{ id: modelId, name: modelName, description: string(model.description, 300), efforts, defaultEffort, effortsNative: !useFallbackEfforts }]
@@ -799,11 +813,11 @@ export class HostBridge {
             if (!mid || !mname) return []
             const isOpenAI = protocol.includes('openai')
             const isAnthropic = protocol.includes('anthropic')
-            const fallbackEfforts = [{ id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }]
             const useFallbackEfforts = isOpenAI || isAnthropic
-            // Fallback efforts show in UI but are NOT passed to session.selectModel —
-            // effortsNative=false signals callers to skip reasoningEffort attachment.
-            return [{ id: mid, name: mname, description: '', efforts: useFallbackEfforts ? fallbackEfforts : [], defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
+            const fallbackEfforts = useFallbackEfforts ? fallbackReasoningEfforts(protocol) : []
+            // Fallback efforts show in the UI; the host persists the pick and
+            // drops it only if DSH rejects the effort at session.selectModel.
+            return [{ id: mid, name: mname, description: '', efforts: fallbackEfforts, defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
           })
           if (providerModels.length) models.push({ id: groupId, name: groupName, models: providerModels })
         }
