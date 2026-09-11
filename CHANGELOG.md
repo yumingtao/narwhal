@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - 2026-09-10
+## [0.1.0] - 2026-09-11
 
 ### Added
 
@@ -27,10 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Reasoning effort (low / medium / high) is now passed through to
-  OpenAI-compatible gateways for hand-declared models — the gateway sees the
+- Reasoning effort (low / medium / high / xhigh / max) is now passed
+  through to OpenAI-compatible gateways for hand-declared models — all five
+  levels pi-ai supports are advertised by default, the gateway sees the
   selected effort instead of silently defaulting to off. Effort is also
   remembered per model (`provider/model`) and restored when switching models.
+  Anthropic providers keep the three-level ladder (low / medium / high).
 
 ### Fixed
 
