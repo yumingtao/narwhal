@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
 import type { AgentConfiguration, AgentConversation, AgentSession, Attachment, ChatItem, CreateProviderResult, CustomProviderCapability, ModelProvider, ProviderSetting, UsageStats } from '../shared/desktop-contract.js'
 import { classifyTrajectory } from '../shared/trajectory-classifier.js'
+import { classifyProviderError, type ProviderErrorCode } from '../shared/provider-error.js'
 import { getConfig, saveConfig } from './config.js'
 
 type JsonRecord = Record<string, unknown>
@@ -195,11 +196,13 @@ export class HostBridge {
    * 300s, so 60s of TOTAL silence only fires for genuinely stuck turns.
    */
   private promptWatch: { sessionId: string; lastActivity: number; timer: NodeJS.Timeout } | undefined
-  /** Error card already shown for the CURRENT turn. DSH can deliver the same
-   *  failure twice per turn (host/agent-error + turn/end) — collapse those,
-   *  but a NEW turn failing with the same message must still get its own card,
-   *  otherwise repeated identical gateway errors look like "nothing happened". */
-  private turnErrorText: string | undefined
+  /** Identity of the failure already carded for the CURRENT turn. DSH can
+   * deliver the same failure twice per turn (host/agent-error + turn/end) —
+   * collapse those, but a NEW turn failing again must still get its own card,
+   * otherwise repeated identical gateway errors look like "nothing happened".
+   * Classified errors dedup by stable code even when the two deliveries carry
+   * different raw wording; unclassified errors fall back to text matching. */
+  private turnErrorKey: { code?: ProviderErrorCode; text: string } | undefined
 
   /** Called by main process whenever workspace list changes. */
   setSurvivingCwds(paths: Iterable<string>): void {
@@ -221,7 +224,7 @@ export class HostBridge {
   private emit(): void { const value = this.snapshot(); for (const listener of this.listeners) listener(value) }
   private resetSelectedSession(): void {
     this.stopPromptWatch()
-    this.turnErrorText = undefined
+    this.turnErrorKey = undefined
     this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false; this.seenEventIds.clear(); this.usage = undefined; this.openSteps.clear(); this.totalTtft = 0; this.ttftSamples = 0; this.decodeTokens = 0; this.decodeMs = 0; this.cacheReadTokens = 0
   }
   clearSelection(): AgentConversation { this.resetSelectedSession(); this.emit(); return this.snapshot() }
@@ -282,13 +285,13 @@ export class HostBridge {
     const type = string(frame.type, 80); const sessionId = validId(frame.sessionId)
     if (type === 'host/session-status' && sessionId) { if (sessionId === this.selectedSessionId) this.running = frame.running === true; this.sessions = this.sessions.map((item) => item.id === sessionId ? { ...item, running: frame.running === true } : item); this.emit() }
     if (type === 'host/agent-error' && sessionId === this.selectedSessionId) {
-      const rawMsg = string(frame.message) ?? 'The local Agent reported an error.'
-      // DSH's raw "Connection error." hint is too brief — wrap with actionable context
-      const text = rawMsg.toLowerCase().includes('connection')
-        ? `${rawMsg} Check that the provider base URL is reachable and the API key is valid.`
-        : rawMsg
-      if (this.turnErrorSeen(text)) return
-      const err: ChatItem = { id: `error-${Date.now()}`, kind: 'error', label: 'Agent error', text, time: Date.now() }
+      const text = string(frame.message) ?? 'The local Agent reported an error.'
+      // Stable code drives the localized, actionable card in the renderer;
+      // the raw provider text rides along as collapsible detail. Unclassified
+      // messages are displayed verbatim.
+      const code = classifyProviderError(text)
+      if (this.turnErrorSeen(code, text)) return
+      const err: ChatItem = { id: `error-${Date.now()}`, kind: 'error', label: 'Provider error', text, time: Date.now(), ...(code && { code }) }
       this.messages = [...this.messages, err].slice(-MAX_ITEMS)
       this.pushTrajectory(err, true)
     }
@@ -296,14 +299,17 @@ export class HostBridge {
   }
   private pushTrajectory(item: ChatItem, emit = true): void { this.trajectory = [...this.trajectory, item].slice(-MAX_ITEMS); if (emit) this.emit() }
   /** Returns true when this exact failure was already carded for the CURRENT
-   *  turn (DSH can deliver host/agent-error plus turn/end, the host one
-   *  sometimes wrapped with a hint sentence — collapse those two). The record
-   *  resets on every turn/start, so a later turn failing with the identical
-   *  provider message still produces its own visible error card. */
-  private turnErrorSeen(text: string): boolean {
-    const prev = this.turnErrorText
-    if (prev !== undefined && (prev === text || prev.includes(text) || (text.length > 24 && text.includes(prev)))) return true
-    this.turnErrorText = text
+   * turn (DSH can deliver host/agent-error plus turn/end for the same
+   * failure, sometimes with different wrapping). Classified failures match
+   * by stable code; unclassified ones keep the original containment-based
+   * text comparison. The record resets on every turn/start. */
+  private turnErrorSeen(code: ProviderErrorCode | undefined, text: string): boolean {
+    const prev = this.turnErrorKey
+    if (prev) {
+      if (code && prev.code === code) return true
+      if (!code && !prev.code && (prev.text === text || prev.text.includes(text) || (text.length > 24 && text.includes(prev.text)))) return true
+    }
+    this.turnErrorKey = { code, text }
     return false
   }
   private rememberEvent(sessionId: string, event: JsonRecord): boolean {
@@ -379,8 +385,9 @@ export class HostBridge {
         if (reason && reason['kind'] === 'error') {
           const detail = isRecord(reason['error']) ? reason['error'] : isRecord(reason['failure']) ? reason['failure'] : {}
           const msg = string(detail['message']) ?? string(reason['error']) ?? string(reason['message']) ?? 'The model provider returned an error.'
-          if (!this.turnErrorSeen(msg)) {
-            const err: ChatItem = { id: `turn-error-${sessionId}-${seq}`, kind: 'error', label: 'Provider error', text: msg, time }
+          const code = classifyProviderError(msg)
+          if (!this.turnErrorSeen(code, msg)) {
+            const err: ChatItem = { id: `turn-error-${sessionId}-${seq}`, kind: 'error', label: 'Provider error', text: msg, time, ...(code && { code }) }
             this.messages = [...this.messages, err].slice(-MAX_ITEMS)
           }
         }
@@ -392,7 +399,7 @@ export class HostBridge {
       this.running = true
       // New turn → each turn is allowed its own error card again (identical
       // gateway failures across turns must not silently vanish).
-      this.turnErrorText = undefined
+      this.turnErrorKey = undefined
     }
     this.emit()
   }

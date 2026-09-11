@@ -1,3 +1,5 @@
+import type { ProviderErrorCode } from './provider-error.js'
+
 export type AgentState = 'ready' | 'starting' | 'needs-restart'
 export type ConversationStatus = 'active' | 'done'
 export interface TodoItem { readonly id: string; readonly text: string; readonly done: boolean }
@@ -7,7 +9,7 @@ export interface Workspace { readonly id: string; readonly name: string; readonl
 export interface GitChange { readonly path: string; readonly kind: string }
 export interface AgentSession { readonly id: string; readonly title: string; readonly updatedAt: number; readonly running: boolean; readonly cwd?: string }
 export interface Attachment { readonly id: string; readonly name: string; readonly size: number; readonly type: string; readonly dataUrl?: string }
-export interface ChatItem { readonly id: string; readonly kind: 'user' | 'assistant' | 'trajectory' | 'error'; readonly text: string; readonly label?: string; readonly time: number; readonly streaming?: boolean; readonly attachments?: readonly Attachment[] }
+export interface ChatItem { readonly id: string; readonly kind: 'user' | 'assistant' | 'trajectory' | 'error'; readonly text: string; readonly label?: string; readonly time: number; readonly streaming?: boolean; readonly attachments?: readonly Attachment[]; readonly code?: ProviderErrorCode }
 export interface UsageStats { readonly turns: number; readonly steps: number; readonly llmLatency: number; readonly ttftAvg: number; readonly tokenThroughput: number; readonly cacheHitRate: number; readonly inputTokens: number; readonly outputTokens: number }
 export interface AgentConversation { readonly sessions: readonly AgentSession[]; readonly selectedSessionId?: string; readonly messages: readonly ChatItem[]; readonly trajectory: readonly ChatItem[]; readonly running: boolean; readonly usage?: UsageStats }
 export interface WorkbenchSnapshot { readonly workspaces: readonly Workspace[]; readonly selectedWorkspaceId?: string; readonly conversations: readonly Conversation[]; readonly selectedConversationId?: string; readonly deliverables: readonly Deliverable[]; readonly panelOpen: boolean; readonly git: { readonly branch?: string; readonly changes: readonly GitChange[] }; readonly conversation: AgentConversation }

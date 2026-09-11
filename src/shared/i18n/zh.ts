@@ -124,6 +124,14 @@ export const zh: Record<string, string> = {
   'agent.retry': '重试',
   'agent.providersNeedKey': '有 Provider 还需要设置 API Key',
 
+  // ── 提供方错误卡片（code 来自 shared/provider-error）──
+  'error.providerTitle': '模型提供方错误',
+  'error.viewDetail': '提供方原始信息（详情）',
+  'error.gateway-session': '网关上游的模型会话暂时不可用——这是提供方的服务故障，与你的 API Key 和 Narwhal 无关。通常几分钟内会自动恢复，请稍后重试。',
+  'error.auth': '提供方拒绝了该 API Key，请检查密钥是否正确、有效，并且有权访问该模型。',
+  'error.rate-limit': '提供方正在限流（请求过多或额度已用尽），请稍等片刻后重试。',
+  'error.network': 'Narwhal 无法连接到提供方，请检查 Base URL、网络/代理以及该服务是否在线。',
+
   // ── 其他 ─────────────────────────────────────
   'misc.dragToResize': '拖动调整大小 · 双击重置',
   'misc.dismiss': '关闭',

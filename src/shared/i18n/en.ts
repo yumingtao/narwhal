@@ -126,6 +126,14 @@ export const en: Record<string, string> = {
   'agent.retry': 'Retry',
   'agent.providersNeedKey': 'One or more providers need an API key',
 
+  // ── Provider error cards (code from shared/provider-error) ──
+  'error.providerTitle': 'Provider error',
+  'error.viewDetail': 'Provider message (details)',
+  'error.gateway-session': "The gateway's upstream model session is temporarily unavailable — this is a provider-side outage, not an issue with your API key or Narwhal. It usually recovers within a few minutes; retry shortly.",
+  'error.auth': 'The provider rejected the API key. Check that the key is correct, valid, and has access to this model.',
+  'error.rate-limit': 'The provider is rate-limiting requests (too many requests or quota exceeded). Wait a short while and try again.',
+  'error.network': "Narwhal can't reach the provider. Check the base URL, your network/proxy, and whether the service is online.",
+
   // ── Resize / Misc ─────────────────────────────────────
   'misc.dragToResize': 'Drag to resize · Double-click to reset',
   'misc.dismiss': 'Dismiss',

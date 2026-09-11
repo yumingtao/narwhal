@@ -792,7 +792,29 @@ function AttachmentList({ attachments }: { attachments: readonly Attachment[] })
     </div>
   )
 }
+function ProviderErrorCard({ item }: { item: ChatItem }) {
+  // Classified provider failures: localized, actionable summary; the raw
+  // provider message stays available behind a collapsible disclosure.
+  const code = item.code
+  if (!code) return null
+  return (
+    <article className="trajectory-row error provider-error-card">
+      <span className="trajectory-mark"><Icon name="error"/></span>
+      <div className="provider-error-body">
+        <strong>{t('error.providerTitle')}</strong>
+        <p>{t(`error.${code}`)}</p>
+        {item.text && (
+          <details className="provider-error-detail">
+            <summary>{t('error.viewDetail')}</summary>
+            <pre>{item.text}</pre>
+          </details>
+        )}
+      </div>
+    </article>
+  )
+}
 function TimelineItem({ item, trajectory }: { item: ChatItem; trajectory: boolean }) {
+  if (item.kind === 'error' && item.code) return <ProviderErrorCard item={item}/>
   if (trajectory || item.kind === 'trajectory' || item.kind === 'error') {
     const event = normalizeTrajectory(item)
     return (
