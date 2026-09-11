@@ -5,18 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- Friendly localized provider error cards: gateway failures are classified
-  in the main process by stable codes (gateway session, auth, rate limit,
-  network); the renderer shows a localized explanation of what happened and
-  keeps the provider's raw message behind a collapsible "details"
-  disclosure. Unclassified errors still show the raw text verbatim.
-- Vitest test runner (`pnpm test`) with table-driven tests for the error
-  classifier and the provider profile reasoning-effort conversion.
-
 ## [0.1.0] - 2026-09-11
 
 ### Added
@@ -36,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom OpenAI-compatible providers are fully runnable from the UI:
   credential ref derivation, create/update/delete with credential cleanup,
   and composer model filtering by runnability
+- Friendly localized provider error cards: gateway failures are classified
+  in the main process by stable codes (gateway session, auth, rate limit,
+  network); the renderer shows a localized explanation of what happened and
+  keeps the provider's raw message behind a collapsible "details"
+  disclosure. Unclassified errors still show the raw text verbatim.
+- Vitest test runner (`pnpm test`) with table-driven tests for the error
+  classifier and the provider profile reasoning-effort conversion.
 
 ### Changed
 
