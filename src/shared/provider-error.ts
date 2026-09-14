@@ -17,9 +17,9 @@ interface ErrorPattern {
 }
 
 const PATTERNS: readonly ErrorPattern[] = [
-  // Reverse-engineered ChatGPT-web gateways (observed: acme) answer 200
-  // + SSE and then inject a Chinese instruction telling the user to copy the
-  // web session id. It is an upstream session outage on the gateway side.
+  // Some reverse-engineered ChatGPT-web gateways answer 200 + SSE and then
+  // inject a Chinese instruction telling the user to copy the web session
+  // id. It is an upstream session outage on the gateway side.
   { code: 'gateway-session', test: /复制会话\s*id|chatgpt\s*客户端|粘贴到新会话/u },
   // Authentication / authorization
   { code: 'auth', test: /\b(401|403)\b|unauthori[sz]ed|invalid\s+api[\s_-]*key|incorrect\s+api[\s_-]*key|authentication\s+failed|invalid\s+authentication/iu },

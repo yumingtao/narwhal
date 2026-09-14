@@ -3,7 +3,7 @@ import { classifyProviderError } from './provider-error.js'
 
 describe('classifyProviderError', () => {
   const cases: ReadonlyArray<readonly [string, string]> = [
-    // Real message observed from acme gateway during outage windows
+    // Real message observed from a reverse-engineered ChatGPT-web gateway during an outage
     ['gateway-session', 'chatgpt 客户端请在上方会话标题处“....”，复制→复制会话 id，然后在粘贴到新会话继续'],
     ['gateway-session', '请复制会话 id 后重试'],
     ['gateway-session', 'ChatGPT 客户端：请粘贴到新会话'],

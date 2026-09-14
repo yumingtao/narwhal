@@ -185,13 +185,13 @@ export class HostBridge {
   private survivingCwds = new Set<string>()
   private cwdsInitialized = false
   /**
-   * Inactivity watchdog for the active prompt. The upstream gateway can hold
-   * a connection open without sending any bytes (observed with acme
-   * hanging >35s, or ~20s stall before the request even reaches the gateway)
-   * OR inject an error mid-stream; the latter is reported via turn/end. Any
-   * LIVE mux event for the watched session (request headers, chunks, tool
-   * calls, …) resets the idle clock. The allowance is generous (60s) rather
-   * than a 20s wall clock: high-effort reasoning models and slow gateways can
+   * Inactivity watchdog for the active prompt. An upstream gateway can hold
+   * a connection open without sending any bytes (observed hanging >35s, or
+   * ~20s stall before the request even reaches the gateway) OR inject an
+   * error mid-stream; the latter is reported via turn/end. Any LIVE mux
+   * event for the watched session (request headers, chunks, tool calls, …)
+   * resets the idle clock. The allowance is generous (60s) rather than a
+   * 20s wall clock: high-effort reasoning models and slow gateways can
    * legitimately exceed 20s to first token; DSH's own stream-idle timeout is
    * 300s, so 60s of TOTAL silence only fires for genuinely stuck turns.
    */
@@ -373,13 +373,13 @@ export class HostBridge {
         this.running = false
         this.stopPromptWatch()
         this.messages = this.messages.map((item) => item.id === `${sessionId}:stream` ? { ...item, streaming: false } : item)
-        // Gateways (observed with acme) answer HTTP 200 + SSE and then
-        // inject an error mid-stream — either as fake assistant content
-        // ("copy the ChatGPT session id…") or as an empty 0-token error
-        // event. DSH reports it here as reason.kind === 'error'. Surface the
-        // PROVIDER'S message instead of swallowing it; each failed turn gets
-        // its own card (turnErrorSeen only dedups the same-turn double
-        // delivery). 'aborted' (our own cancel) stays silent.
+        // Some reverse-engineered ChatGPT-web gateways answer HTTP 200 + SSE
+        // and then inject an error mid-stream — either as fake assistant
+        // content ("copy the ChatGPT session id…") or as an empty 0-token
+        // error event. DSH reports it here as reason.kind === 'error'.
+        // Surface the PROVIDER'S message instead of swallowing it; each
+        // failed turn gets its own card (turnErrorSeen only dedups the
+        // same-turn double delivery). 'aborted' (our own cancel) stays silent.
         const data = isRecord(event.data) ? event.data : {}
         const reason = isRecord(data.reason) ? data.reason : undefined
         if (reason && reason['kind'] === 'error') {
@@ -469,9 +469,9 @@ export class HostBridge {
     // Inactivity — not wall-clock — timeout: a turn stays alive as long as
     // events keep arriving over the live mux stream. The 60s allowance covers
     // slow-to-first-token reasoning models and gateways that stall before
-    // responding (observed: acme ~20s TCP stall, then a stream error);
-    // only TOTAL silence past that — no events at all — means the turn is
-    // stuck with nothing to show, so fail with an honest message and cancel.
+    // responding (observed: ~20s TCP stall, then a stream error); only TOTAL
+    // silence past that — no events at all — means the turn is stuck with
+    // nothing to show, so fail with an honest message and cancel.
     const IDLE_LIMIT_MS = 60_000
     const watch = { sessionId, lastActivity: Date.now(), timer: undefined as unknown as NodeJS.Timeout }
     watch.timer = setInterval(() => {
