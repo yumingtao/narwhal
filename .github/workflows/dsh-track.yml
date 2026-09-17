@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  issues: write
 
 jobs:
   check-and-bump:
@@ -66,6 +67,37 @@ jobs:
             echo "status=up-to-date" >> "$GITHUB_OUTPUT"
           fi
 
+      # DSH has not reached 1.0: under 0.x a minor jump is allowed to carry
+      # breaking wire changes (it did: 0.1.2 introduced cookie auth, 0.1.5
+      # replaced the event transport). Patch/prerelease-only jumps are low risk.
+      - name: Classify bump risk
+        id: risk
+        if: steps.compare.outputs.status == 'outdated'
+        run: |
+          node - "${{ steps.upstream.outputs.version }}" "${{ steps.current.outputs.locked }}" <<'NODE'
+          const semver = require('semver')
+          const [next, locked] = process.argv.slice(2).map((v) => semver.parse(v))
+          let kind
+          if (next.major !== locked.major) kind = 'major'
+          else if (next.minor !== locked.minor) kind = 'minor'
+          else if (next.patch !== locked.patch) kind = 'patch'
+          else kind = 'prerelease'
+          // Pre-1.0 every released-number jump can break: 0.1.1 -> 0.1.5 was a
+          // patch-number jump that replaced auth and the event transport. Only
+          // prerelease/finalization moves within the same x.y.z are low risk.
+          // After 1.0, fall back to the usual major = high rule.
+          const risk = locked.major === 0
+            ? (kind === 'prerelease' ? 'low' : 'high')
+            : (kind === 'major' ? 'high' : 'low')
+          const label = risk === 'high' ? 'manual-test-required' : ''
+          const note = risk === 'high'
+            ? '> [!WARNING]\n> **Pre-1.0 runtime bump — DSH has broken the wire contract on patch-number jumps before** (0.1.1 -> 0.1.5 added cookie auth and replaced the event transport). The contract probe only covers the boot/transport surface: smoke-test a real conversation (chat, attachment upload, abort, provider/model/effort switching, session list/delete, settings) before merging.'
+            : '> [!NOTE]\n> Prerelease/finalization move within the same x.y.z, but the contract probe cannot cover renderer behavior — a quick conversation smoke test is still recommended.'
+          console.log(`bump scope: ${kind} (risk: ${risk})`)
+          require('fs').appendFileSync(process.env.GITHUB_OUTPUT,
+            `kind=${kind}\nrisk=${risk}\nlabel=${label}\nnote<<NARWHAL_NOTE\n${note}\nNARWHAL_NOTE\n`)
+          NODE
+
       - name: Log result
         run: |
           STATUS="${{ steps.compare.outputs.status }}"
@@ -75,6 +107,7 @@ jobs:
             echo "🔔 New version available!"
             echo "  Locked:   ${{ steps.current.outputs.locked }}"
             echo "  Upstream: ${{ steps.upstream.outputs.version }}"
+            echo "  Scope:    ${{ steps.risk.outputs.kind }} (risk: ${{ steps.risk.outputs.risk }})"
           fi
 
       - name: Update package.json and manifest
@@ -102,20 +135,25 @@ jobs:
 
           git diff
 
-      - name: Verify build after bump
+      - name: Verify after bump (stage + runtime contract + typecheck + build)
         if: steps.compare.outputs.status == 'outdated'
         run: |
           export DSH_RUNTIME_SOURCE="npm@${{ steps.upstream.outputs.version }}"
           echo "=== Stage runtime ==="
           pnpm run stage:runtime
+          echo "=== Runtime contract probe (boots the host and exercises the wire contract) ==="
+          pnpm run check:runtime-contract
           echo "=== Type check ==="
           pnpm typecheck
           echo "=== Build ==="
           pnpm build
-          echo "✅ Runtime + build verified."
+          echo "✅ Runtime contract, types, and build all verified."
 
+      # success() is intentional: a runtime that breaks the contract probe
+      # must NOT produce a green "verified" PR. The failed run (plus the
+      # failure-heartbeat issue) is the signal that host-bridge needs migration.
       - name: Create Pull Request
-        if: steps.compare.outputs.status == 'outdated'
+        if: steps.compare.outputs.status == 'outdated' && success()
         uses: peter-evans/create-pull-request@v7
         with:
           commit-message: "chore(dsh): bump runtime to ${{ steps.upstream.outputs.version }}"
@@ -128,16 +166,68 @@ jobs:
             |-------|-------|
             | Locked (before) | `${{ steps.current.outputs.locked }}` |
             | Upstream latest | `${{ steps.upstream.outputs.version }}` |
+            | Bump scope | `${{ steps.risk.outputs.kind }}` (risk: `${{ steps.risk.outputs.risk }}`) |
             | Source | `@deepseek-ai/dsh` npm dist-tag `latest` |
 
-            **CI verification already passed**:
-            - `pnpm run stage:runtime` ✅
-            - `pnpm typecheck` ✅
-            - `pnpm build` ✅
+            **Automated checks (all green):**
+            - `pnpm run stage:runtime`
+            - `pnpm run check:runtime-contract` — boots the host and verifies the readiness URL shape, the `/api/events.mux` + `/api/events.host` WebSocket channels, and the unary RPC envelope Narwhal depends on
+            - `pnpm typecheck`
+            - `pnpm build`
+
+            ${{ steps.risk.outputs.note }}
 
             _Opened by `dsh-track.yml` scheduled workflow._
           labels: |
             automated
             dependencies
             dsh-runtime
+            ${{ steps.risk.outputs.label }}
           reviewers: yumingtao
+
+  # Scheduled workflows fail silently (GitHub only emails on the first failure
+  # and repeated red runs are easy to miss). Reconcile a single tracking issue:
+  # open/comment it when the check job fails, close it when runs go green.
+  failure-heartbeat:
+    name: Reconcile tracking issue on workflow health
+    needs: check-and-bump
+    if: always() && (needs.check-and-bump.result == 'failure' || needs.check-and-bump.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open or close the dsh-track-bot issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RESULT: ${{ needs.check-and-bump.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL='dsh-track-bot'
+          TITLE='🚨 Track DSH Updates workflow needs attention'
+          NUM=$(gh issue list --label "$LABEL" --state open --json number --jq '.[0].number // empty' || true)
+          if [ "$RESULT" = 'success' ]; then
+            if [ -n "$NUM" ]; then
+              gh issue close "$NUM" --comment "✅ Latest run succeeded: $RUN_URL"
+            fi
+            echo 'workflow healthy; no open tracker issue'
+          else
+            BODY=$(cat <<EOF
+          The scheduled **Track DSH Updates** workflow finished with status **$RESULT**.
+
+          - Run: $RUN_URL
+          - Triggered: ${{ github.eventName }}
+
+          Check the failed step. Two common causes:
+          1. **Infrastructure** (npm/pnpm/network) — re-run the workflow.
+          2. **Runtime contract drift** — the new \`@deepseek-ai/dsh\` release changed the boot or wire contract (auth, event channels, RPC envelope). \`check:runtime-contract\` prints the exact violation; \`src/main/host-supervisor.ts\` / \`src/main/host-bridge.ts\` need migration before a bump PR can be opened.
+
+          This issue is closed automatically once a daily run succeeds.
+          EOF
+          )
+            if [ -z "$NUM" ]; then
+              gh issue create --title "$TITLE" --label "$LABEL" --body "$BODY"
+            else
+              # One persistent issue is the signal; do not spam a comment on
+              # every daily red run (e.g. a known contract drift awaiting migration).
+              echo "tracker issue #$NUM already open; leaving it until a green run closes it ($RUN_URL)"
+            fi
+          fi

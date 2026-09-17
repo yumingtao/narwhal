@@ -20,6 +20,7 @@
     "dev:web": "vite --config vite.config.ts --host",
     "start": "electron .",
     "stage:runtime": "node scripts/stage-runtime.mjs",
+    "check:runtime-contract": "node scripts/check-runtime-contract.mjs",
     "package:mac": "pnpm run build && pnpm run stage:runtime && electron-builder --mac dmg zip --publish never"
   },
   "devDependencies": {
