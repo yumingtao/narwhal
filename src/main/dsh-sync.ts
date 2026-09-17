@@ -1,5 +1,5 @@
-import { existsSync, unlinkSync } from 'node:fs'
-import { mkdir, readFile, writeFile, symlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import yaml from 'yaml'
 import {
@@ -11,99 +11,6 @@ import {
   defaultConfig,
 } from '../shared/config-schema.js'
 
-// ── Narwhal Commands plugin source (embedded ESM string) ──────────────────
-// This cordis patch plugin injects webServer, sessions, agents, compaction
-// and exposes /plan, /feedback, /compact as HTTP endpoints at /api/narwhal/*.
-// These three commands are normally only reachable through the cordis
-// `commands` WebSocket mux — this plugin bridges them to HTTP so Narwhal's
-// host-bridge can invoke them.
-const NARWHAL_COMMANDS_PLUGIN_CODE = String.raw`
-import { Service } from "@deepseek-ai/cordis";
-
-class NarwhalCommands extends Service {
-  // compaction is optional — it may not be present in every profile
-  // (e.g. a headless build could disable it). We fetch it at call time
-  // via ctx.get() rather than listing it in static inject.
-  static inject = ["webServer", "sessions", "agents"];
-  constructor(ctx) { super(ctx, "narwhalCommands"); }
-
-  async [Service.init]() {
-    const ctx = this.ctx;
-
-    async function readBody(req) {
-      if (!req.headers["content-type"]?.includes("application/json")) return {};
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const text = Buffer.concat(chunks).toString("utf-8");
-      if (!text) return {};
-      try { return JSON.parse(text); } catch { throw new Error("invalid JSON body"); }
-    }
-
-    function sendJson(res, status, data) {
-      res.writeHead(status, { "content-type": "application/json" });
-      res.end(JSON.stringify(data));
-    }
-
-    ctx.webServer.register({
-      kind: "prefix",
-      path: "/api/narwhal",
-      handler: async (req, res) => {
-        const p = new URL(req.url, "http://x").pathname;
-        try {
-          if (p === "/api/narwhal/plan" && req.method === "POST") {
-            const { sessionId, active } = await readBody(req);
-            if (!sessionId) return sendJson(res, 400, { ok: false, error: "sessionId required" });
-            const session = ctx.sessions.get(sessionId);
-            if (!session) return sendJson(res, 404, { ok: false, error: "session not found" });
-            session.append("plan/mode", { active: !!active });
-            return sendJson(res, 200, { ok: true, sessionId, active: !!active });
-          }
-          if (p === "/api/narwhal/feedback" && req.method === "POST") {
-            const { sessionId, text } = await readBody(req);
-            if (!sessionId) return sendJson(res, 400, { ok: false, error: "sessionId required" });
-            if (!text?.trim()) return sendJson(res, 400, { ok: false, error: "text required" });
-            const session = ctx.sessions.get(sessionId);
-            if (!session) return sendJson(res, 404, { ok: false, error: "session not found" });
-            session.append("feedback/record", { text: text.trim() });
-            return sendJson(res, 200, { ok: true, sessionId });
-          }
-          if (p === "/api/narwhal/compact" && req.method === "POST") {
-            const { sessionId } = await readBody(req);
-            if (!sessionId) return sendJson(res, 400, { ok: false, error: "sessionId required" });
-            const compaction = ctx.get("compaction");
-            if (!compaction) return sendJson(res, 503, { ok: false, error: "compaction service not available in this profile" });
-            const agent = ctx.agents.get(sessionId);
-            if (!agent) return sendJson(res, 404, { ok: false, error: "no live agent for session" });
-            const result = await compaction.compactNow(agent, new AbortController().signal, "narwhal-web");
-            if (result === null) return sendJson(res, 200, { ok: true, compacted: false, reason: "no compactable history" });
-            return sendJson(res, 200, {
-              ok: true, compacted: true,
-              shadowedSeqs: result.shadowedSeqs?.length ?? 0,
-              shadowedTokens: result.shadowedTokenCount ?? 0,
-              summarySeq: result.summarySeq,
-            });
-          }
-          return sendJson(res, 404, { ok: false, error: "unknown endpoint" });
-        } catch (err) {
-          return sendJson(res, 500, { ok: false, error: String(err?.message ?? err) });
-        }
-      },
-    });
-  }
-}
-
-export default NarwhalCommands;
-`
-
-const NARWHAL_COMMANDS_PKG_JSON = JSON.stringify({
-  name: '@narwhal/narwhal-commands',
-  version: '1.0.0',
-  type: 'module',
-  main: 'index.js',
-  dsh: { bundle: { id: 'narwhal-commands' } },
-  keywords: ['dsh-plugin', 'deepseek-harness', 'narwhal'],
-}, null, 2)
-
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /** Result of a sync operation — what was written and where. */
@@ -113,57 +20,6 @@ export interface SyncResult {
   providerCount: number
   mcpCount: number
   skillsEnabled: boolean
-  pluginDeployed: boolean
-}
-
-/**
- * Deploy the narwhal-commands cordis plugin into the DSH runtime's
- * node_modules so it can be referenced by bare module specifier in
- * cordis.patch.yml. Safe to call every startup (idempotent).
- *
- * This writes two locations because Node.js resolves bare specifiers from
- * the DSH profile's cwd (profiles/web) via parent-directory walk, which
- * stops at the project root boundary — it never reaches runtimeRoot. DSH's
- * healProfiles places a flat symlink fallback at profiles/node_modules/
- * but we're an external @narwhal/* package that healProfiles does not know
- * about, so we must create that symlink ourselves.
- *
- * @param runtimeRoot  path to the DSH runtime (from resolveRuntime())
- * @param dshHome      DSH_HOME directory — used to create the profiles/
- *                     node_modules symlink that Node.js needs
- * @returns true if plugin was deployed (or already present), false on error
- */
-export async function deployNarwhalCommandsPlugin(runtimeRoot?: string, dshHome?: string): Promise<boolean> {
-  if (!runtimeRoot) return false
-  const pluginDir = join(runtimeRoot, 'node_modules', '@narwhal', 'narwhal-commands')
-  try {
-    // 1. Write plugin files into the runtime's node_modules/@narwhal/
-    await mkdir(pluginDir, { recursive: true })
-    await writeFile(join(pluginDir, 'package.json'), NARWHAL_COMMANDS_PKG_JSON, 'utf-8')
-    await writeFile(join(pluginDir, 'index.js'), NARWHAL_COMMANDS_PLUGIN_CODE, 'utf-8')
-    console.log('[narwhal] deployed narwhal-commands plugin →', pluginDir)
-
-    // 2. Symlink into profiles/node_modules/@narwhal/ so Node.js can resolve
-    //    "@narwhal/narwhal-commands" from inside profiles/web.
-    if (dshHome) {
-      const profilesNodeModules = join(dshHome, 'profiles', 'node_modules')
-      const narwhalScope = join(profilesNodeModules, '@narwhal')
-      const profilesLink = join(narwhalScope, 'narwhal-commands')
-      await mkdir(narwhalScope, { recursive: true })
-      // Remove stale symlink or file if any — we want the link to point at the
-      // canonical runtime location so updates propagate instantly.
-      if (existsSync(profilesLink)) {
-        try { unlinkSync(profilesLink) } catch { /* race — let symlink below handle it */ }
-      }
-      await symlink(pluginDir, profilesLink)
-      console.log('[narwhal] symlinked →', profilesLink, '→', pluginDir)
-    }
-
-    return true
-  } catch (err) {
-    console.warn('[narwhal] failed to deploy narwhal-commands plugin:', err instanceof Error ? err.message : String(err))
-    return false
-  }
 }
 
 /**
@@ -172,23 +28,15 @@ export async function deployNarwhalCommandsPlugin(runtimeRoot?: string, dshHome?
  *
  * @param configPath  Narwhal's own config.json path (for header comment)
  * @param dshHome     DSH_HOME directory
- * @param runtimeRoot optional DSH runtime path — if provided, also deploys
- *                    the narwhal-commands cordis patch plugin
  */
 export async function syncDshConfig(
   config: NarwhalConfig,
   configPath: string,
   dshHome: string,
-  runtimeRoot?: string,
 ): Promise<SyncResult> {
   const settingsPath = join(dshHome, 'settings.yaml')
   const patchPath = join(dshHome, 'profiles', 'web', 'cordis.patch.yml')
 
-  // 1. Deploy the narwhal-commands cordis plugin into runtime node_modules
-  //    and symlink into profiles/node_modules/@narwhal/ so Node.js resolves it
-  const pluginDeployed = await deployNarwhalCommandsPlugin(runtimeRoot, dshHome)
-
-  // 2. Build config files (patch.yml will include the plugin entry below)
   const settingsContent = buildSettingsYaml(config, configPath)
   const patchContent = buildCordisPatchYaml(config, configPath)
 
@@ -201,7 +49,6 @@ export async function syncDshConfig(
     providerCount: Object.keys(config.providers).length,
     mcpCount: config.mcpServers.length,
     skillsEnabled: config.skills.enabled,
-    pluginDeployed,
   }
 }
 
@@ -370,17 +217,6 @@ type CordisPatchItem =
 
 function buildCordisPatchYaml(config: NarwhalConfig, configPath: string): string {
   const items: CordisPatchItem[] = []
-
-  // ── Narwhal core plugin (always-on, provides /plan, /feedback, /compact) ──
-  // This is a brand-new entry not present in any bundle, so it MUST use
-  // `- insert:` syntax rather than `- id:` (which only overrides existing rows).
-  items.push({
-    insert: [{
-      id: 'narwhal-commands',
-      name: '@narwhal/narwhal-commands',
-      disabled: false,
-    }],
-  })
 
   // ── Skill system (override existing bundle rows) ──────────────────────────
   if (config.skills.enabled) {

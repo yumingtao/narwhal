@@ -252,7 +252,7 @@ async function showRecovery(reason?: Error): Promise<void> {
 async function startHost(): Promise<void> {
   agent = { state: 'starting' }; emitAgent()
   const generation = await getSupervisor().start()
-  await hostBridge.start(generation.origin)
+  await hostBridge.start(generation.origin, generation.cookie)
   syncSurvivingCwds()
   agent = { state: 'ready', origin: generation.origin }; emitAgent()
   const workspace = selected()
@@ -591,7 +591,11 @@ async function bootstrap(): Promise<void> {
     }
   } catch (e) { /* best-effort — config load above already succeeded */ }
   try { await syncToDsh() } catch (e) { console.error('[narwhal] syncToDsh failed (non-fatal):', e instanceof Error ? e.message : String(e)) }
-  activeSupervisor = createHostSupervisor(() => spawn(selectedRuntime!.nodeExecutable, [...selectedRuntime!.launchArguments, '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true }), () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) })
+  activeSupervisor = createHostSupervisor(
+    () => spawn(selectedRuntime!.nodeExecutable, [...selectedRuntime!.launchArguments, '--profile', 'web', '--host', '127.0.0.1', '--port', '0', '--no-open'], { cwd: selectedRuntime!.root, env: safeEnvironment(dshHome), stdio: 'pipe', windowsHide: true, detached: true }),
+    () => { void hostBridge.stop(); void showRecovery(new Error('Local Agent stopped unexpectedly')) },
+    { pidfile: join(dshHome, 'runtime.pid'), processMarker: selectedRuntime!.cliEntry },
+  )
   hostBridge.subscribe((conversation) => { emitConversation(conversation); scheduleWorkbenchRefresh() })
   tray = new Tray(nativeImage.createFromPath(join(app.getAppPath(), 'dist', 'renderer', 'assets', 'narwhal-tray.png')).resize({ width: 18, height: 18 })); tray.setToolTip('Narwhal'); tray.setContextMenu(Menu.buildFromTemplate([{ label: 'Show Narwhal', click: () => windowRef?.show() }, { label: 'Quit', click: () => app.quit() }])); tray.on('click', () => windowRef?.show())
   console.log('[narwhal] bootstrap: loading app URL:', appUrl)

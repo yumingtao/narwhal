@@ -11,6 +11,14 @@ type Listener = (conversation: AgentConversation) => void
 const MAX_TEXT = 24_000
 const MAX_ITEMS = 400
 const MAX_SEEN_EVENTS = 2_000
+/** DSH 0.1.5 routes every custom (pi-ai) provider through this settings namespace. */
+const PIAI_SETTINGS_NS = 'llm-pi-ai'
+const PIAI_PROVIDERS_PATH = ['providers'] as const
+/** Protocols the bundled dsh-llm-pi-ai adapter accepts (0.1.5). */
+const PIAI_PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages'] as const
+const MUX_PATH = '/api/remote.mux'
+const EVENT_STREAM_ENDPOINT = '$events'
+const EVENT_RESULT_ENDPOINT = '$events/result'
 
 function isRecord(value: unknown): value is JsonRecord { return !!value && typeof value === 'object' && !Array.isArray(value) }
 function string(value: unknown, limit = MAX_TEXT): string | undefined { return typeof value === 'string' ? value.slice(0, limit) : undefined }
@@ -54,7 +62,7 @@ function reasoningLevelName(id: string): string { return `${id.charAt(0).toUpper
 function dshReasoningEfforts(): Record<string, string> { return Object.fromEntries(OPENAI_REASONING_LEVELS.map((level) => [level, level])) }
 // Efforts shown for models DSH reports no native reasoning metadata for.
 // Names mirror pi-ai's own capitalization (xhigh → "Xhigh", max → "Max").
-function fallbackReasoningEfforts(protocol: string): { id: string, name: string }[] {
+function fallbackReasoningEfforts(protocol: string): { id: string; name: string }[] {
   if (protocol.includes('anthropic')) return ANTHROPIC_REASONING_LEVELS.map((id) => ({ id, name: reasoningLevelName(id) }))
   if (protocol.includes('openai')) return OPENAI_REASONING_LEVELS.map((id) => ({ id, name: reasoningLevelName(id) }))
   return []
@@ -83,7 +91,7 @@ function permissionOptions(schema: unknown): { id: string; label: string }[] {
   const label = (value: string) => value.replace(/-/gu, ' ').replace(/\b\w/gu, (letter) => letter.toUpperCase())
   if (!isRecord(schema)) return []
   if (isRecord(schema.properties) && isRecord(schema.properties.defaultPreset)) {
-    const field = schema.properties.defaultPreset; const values = Array.isArray(field.enum) ? field.enum : []; const labels = Array.isArray(field.enumNames) ? field.enumNames : []
+    const field = schema.properties.defaultPreset as JsonRecord; const values = Array.isArray(field.enum) ? field.enum : []; const labels = Array.isArray(field.enumNames) ? field.enumNames : []
     return values.flatMap((value, index) => typeof value === 'string' ? [{ id: value, label: typeof labels[index] === 'string' ? labels[index] : label(value) }] : [])
   }
   const refs = isRecord(schema.refs) ? schema.refs : undefined; const rootId = typeof schema.uid === 'number' ? String(schema.uid) : undefined; const root = refs && rootId ? refs[rootId] : undefined
@@ -149,23 +157,31 @@ function customProviderCapability(namespaces: readonly JsonRecord[], writable: b
   if (!writable) return { available: false, protocols: [], reason: 'The local Host settings are read-only.' }
   const descriptor = customProviderDescriptor(namespaces)
   if (descriptor) return { available: true, protocols: descriptor.protocols }
-  // Fallback: DSH runtime may not expose a writable custom-provider schema in
-  // its settings.describe response, but Narwhal implements its own full
-  // create/delete/update provider flow (see createProvider / deleteProvider /
-  // updateProvider). We advertise a minimal capability here so the Add provider
-  // button stays usable — the actual write path bypasses the schema check anyway.
-  return { available: true, protocols: ['openai-completions'] }
+  // Fallback: the 0.1.5 pi-ai adapter ships a fixed protocol set even when
+  // settings.describe's schema serialization can't be walked by Narwhal.
+  return { available: true, protocols: [...PIAI_PROTOCOLS] }
 }
 function validCustomProviderId(value: string): boolean { return /^[a-z][a-z0-9-]{0,79}$/u.test(value) }
 function validModelId(value: string): boolean { return /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/u.test(value) }
 function validApiKey(value: string): boolean { return /^[\x21-\x7E]+$/u.test(value) && !/^(?:[A-Za-z_][A-Za-z0-9_]*)=/u.test(value) && !/^(['"]).*\1$/u.test(value) }
 
+interface MuxStream {
+  readonly endpoint: string
+  args: JsonRecord
+  readonly onItem: (value: unknown) => void
+  readonly onError?: (error: JsonRecord) => void
+  /** When false, a server `end`/`error` removes the stream (one-shot RPC-style). */
+  readonly persistent: boolean
+}
+
 /** Owns the fixed loopback-only Host API and normalizes its output for the renderer. */
 export class HostBridge {
   private origin: string | undefined
+  private cookie = ''
   private mux: WebSocket | undefined
-  private host: WebSocket | undefined
+  private muxOpen = false
   private reconnectTimer: NodeJS.Timeout | undefined
+  private listRefreshTimer: NodeJS.Timeout | undefined
   private stopped = true
   private sessions: AgentSession[] = []
   private selectedSessionId: string | undefined
@@ -181,6 +197,12 @@ export class HostBridge {
   private decodeTokens = 0
   private decodeMs = 0
   private cacheReadTokens = 0
+  /** Multiplexed logical streams keyed by client-minted streamId (0.1.5 remote.mux). */
+  private streams = new Map<string, MuxStream>()
+  /** Client generation id returned by the $events ready frame; required for waterfall results. */
+  private eventClientId = ''
+  /** turn/step coordinates of the in-flight assistant attempt keyed by attemptId. */
+  private attemptTurns = new Map<string, { turn: number; step: number }>()
   /** Cwd values of all surviving workspaces. Sessions whose cwd is NOT in this set are filtered out. */
   private survivingCwds = new Set<string>()
   private cwdsInitialized = false
@@ -188,8 +210,8 @@ export class HostBridge {
    * Inactivity watchdog for the active prompt. An upstream gateway can hold
    * a connection open without sending any bytes (observed hanging >35s, or
    * ~20s stall before the request even reaches the gateway) OR inject an
-   * error mid-stream; the latter is reported via turn/end. Any LIVE mux
-   * event for the watched session (request headers, chunks, tool calls, …)
+   * error mid-stream; the latter is reported via turn/end. Any LIVE follow
+   * frame for the watched session (turn events, stream chunks, tool calls, …)
    * resets the idle clock. The allowance is generous (60s) rather than a
    * 20s wall clock: high-effort reasoning models and slow gateways can
    * legitimately exceed 20s to first token; DSH's own stream-idle timeout is
@@ -197,7 +219,7 @@ export class HostBridge {
    */
   private promptWatch: { sessionId: string; lastActivity: number; timer: NodeJS.Timeout } | undefined
   /** Identity of the failure already carded for the CURRENT turn. DSH can
-   * deliver the same failure twice per turn (host/agent-error + turn/end) —
+   * deliver the same failure twice per turn (api-session/error + turn/end) —
    * collapse those, but a NEW turn failing again must still get its own card,
    * otherwise repeated identical gateway errors look like "nothing happened".
    * Classified errors dedup by stable code even when the two deliveries carry
@@ -223,83 +245,247 @@ export class HostBridge {
   snapshot(): AgentConversation { return { sessions: this.filterSessions(this.sessions), selectedSessionId: this.selectedSessionId, messages: this.messages, trajectory: this.trajectory, running: this.running, ...(this.usage && { usage: this.usage }) } }
   private emit(): void { const value = this.snapshot(); for (const listener of this.listeners) listener(value) }
   private resetSelectedSession(): void {
+    this.closeFollow()
     this.stopPromptWatch()
     this.turnErrorKey = undefined
-    this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false; this.seenEventIds.clear(); this.usage = undefined; this.openSteps.clear(); this.totalTtft = 0; this.ttftSamples = 0; this.decodeTokens = 0; this.decodeMs = 0; this.cacheReadTokens = 0
+    this.selectedSessionId = undefined; this.messages = []; this.trajectory = []; this.running = false; this.seenEventIds.clear(); this.usage = undefined; this.openSteps.clear(); this.totalTtft = 0; this.ttftSamples = 0; this.decodeTokens = 0; this.decodeMs = 0; this.cacheReadTokens = 0; this.attemptTurns.clear()
   }
   clearSelection(): AgentConversation { this.resetSelectedSession(); this.emit(); return this.snapshot() }
 
-  async start(origin: string): Promise<void> {
+  /**
+   * Connect to a 0.1.5 Host. Every request needs the session cookie: HTTP RPCs
+   * send it as a `Cookie` header and the single /api/remote.mux WebSocket
+   * authenticates its upgrade with the same cookie.
+   */
+  async start(origin: string, cookie: string): Promise<void> {
     await this.stop()
     const parsed = new URL(origin)
     if (parsed.protocol !== 'http:' || parsed.hostname !== '127.0.0.1' || !parsed.port) throw new Error('Local Agent origin is invalid')
-    this.origin = parsed.origin; this.stopped = false
-    this.connectStreams()
+    // A single cookie pair (`name=value`), visible ASCII only, never a list
+    // (the pair is split from Set-Cookie by the supervisor). The auth name
+    // carries a base64url id; the value is `v1.<body>.<hmac>` (base64url + '.').
+    if (!/^dsh-auth-[!-~]+=[!-~]*$/u.test(cookie) || cookie.includes(';')) throw new Error('Local Agent cookie is invalid')
+    this.origin = parsed.origin
+    this.cookie = cookie
+    this.stopped = false
+    this.openMux()
+    this.openEvents()
   }
   async stop(): Promise<void> {
     this.stopped = true
     this.stopPromptWatch()
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    if (this.listRefreshTimer) clearTimeout(this.listRefreshTimer)
     this.reconnectTimer = undefined
-    for (const socket of [this.mux, this.host]) { socket?.removeAllListeners(); socket?.terminate() }
-    this.mux = undefined; this.host = undefined; this.origin = undefined
+    this.listRefreshTimer = undefined
+    this.mux?.removeAllListeners()
+    this.mux?.terminate()
+    this.mux = undefined
+    this.muxOpen = false
+    this.streams.clear()
+    this.eventClientId = ''
+    this.origin = undefined
+    this.cookie = ''
   }
-  private connectStreams(): void {
+
+  // ── remote.mux client (0.1.5; one socket multiplexes many logical streams) ─
+
+  private openMux(): void {
     if (this.stopped || !this.origin) return
-    const wsOrigin = this.origin.replace(/^http:/u, 'ws:')
-    this.mux = this.open(`${wsOrigin}/api/events.mux`, 'mux')
-    this.host = this.open(`${wsOrigin}/api/events.host`, 'host')
-  }
-  private open(url: string, channel: 'mux' | 'host'): WebSocket {
-    const socket = new WebSocket(url, { handshakeTimeout: 5_000 })
-    socket.on('message', (raw) => this.handleWire(raw.toString(), channel))
-    socket.on('close', () => this.scheduleReconnect())
+    const socket = new WebSocket(`${this.origin.replace(/^http:/u, 'ws:')}${MUX_PATH}`, { headers: { Cookie: this.cookie }, handshakeTimeout: 8_000 })
+    this.mux = socket
+    socket.on('open', () => {
+      if (this.mux !== socket) return
+      this.muxOpen = true
+      // Re-issue every logical stream open (initial connect or reconnect).
+      for (const [streamId, stream] of this.streams) {
+        socket.send(JSON.stringify({ type: 'open', streamId, endpoint: stream.endpoint, payload: { args: stream.args } }))
+      }
+    })
+    socket.on('message', (raw) => this.handleMuxFrame(raw.toString()))
+    socket.on('close', () => { if (this.mux === socket) { this.muxOpen = false; this.scheduleReconnect() } })
     socket.on('error', () => undefined)
-    return socket
   }
   private scheduleReconnect(): void {
     if (this.stopped || this.reconnectTimer) return
-    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = undefined; this.connectStreams() }, 1_500)
+    this.reconnectTimer = setTimeout(() => { this.reconnectTimer = undefined; this.openMux() }, 1_500)
   }
-  private handleWire(raw: string, channel: 'mux' | 'host'): void {
-    if (raw.length > 256_000) return
+  /** Register and open a logical stream. Persistent streams are re-opened
+   *  automatically after a socket reconnect. Returns the streamId. */
+  private openStream(endpoint: string, args: JsonRecord, handlers: Omit<MuxStream, 'endpoint' | 'args' | 'persistent'> & { persistent?: boolean }): string {
+    const streamId = randomUUID()
+    this.streams.set(streamId, {
+      endpoint,
+      args,
+      onItem: handlers.onItem,
+      ...(handlers.onError ? { onError: handlers.onError } : {}),
+      persistent: handlers.persistent ?? true,
+    })
+    if (this.muxOpen && this.mux) this.mux.send(JSON.stringify({ type: 'open', streamId, endpoint, payload: { args } }))
+    return streamId
+  }
+  private closeStream(streamId: string | undefined): void {
+    if (!streamId) return
+    const stream = this.streams.get(streamId)
+    this.streams.delete(streamId)
+    if (stream && this.muxOpen && this.mux) {
+      try { this.mux.send(JSON.stringify({ type: 'cancel', streamId })) } catch { /* socket closing */ }
+    }
+  }
+  private handleMuxFrame(raw: string): void {
+    if (raw.length > 512_000) return
     let envelope: unknown
     try { envelope = JSON.parse(raw) } catch { return }
-    if (!isRecord(envelope) || envelope.type !== 'server-request' || !isRecord(envelope.payload)) return
-    const frame = envelope.payload
-    if (channel === 'mux') this.handleMux(frame)
-    else this.handleHost(frame)
-  }
-  private handleMux(frame: JsonRecord): void {
-    const type = string(frame.type, 80)
-    if (type === 'session/event') {
-      const sessionId = validId(frame.sessionId); const event = isRecord(frame.event) ? frame.event : undefined
-      if (!sessionId || !event || sessionId !== this.selectedSessionId) return
-      // Only LIVE wire events prove the agent is still alive; history replays
-      // (refreshHistory) must not feed the inactivity watchdog.
-      if (this.promptWatch?.sessionId === sessionId) this.promptWatch.lastActivity = Date.now()
-      this.ingestEvent(sessionId, event)
-    } else if (type === 'stream/error') this.pushTrajectory({ id: `stream-${Date.now()}`, kind: 'error', label: 'Agent event stream', text: 'The local Agent stream needs to reconnect.', time: Date.now() })
-  }
-  private handleHost(frame: JsonRecord): void {
-    const type = string(frame.type, 80); const sessionId = validId(frame.sessionId)
-    if (type === 'host/session-status' && sessionId) { if (sessionId === this.selectedSessionId) this.running = frame.running === true; this.sessions = this.sessions.map((item) => item.id === sessionId ? { ...item, running: frame.running === true } : item); this.emit() }
-    if (type === 'host/agent-error' && sessionId === this.selectedSessionId) {
-      const text = string(frame.message) ?? 'The local Agent reported an error.'
-      // Stable code drives the localized, actionable card in the renderer;
-      // the raw provider text rides along as collapsible detail. Unclassified
-      // messages are displayed verbatim.
-      const code = classifyProviderError(text)
-      if (this.turnErrorSeen(code, text)) return
-      const err: ChatItem = { id: `error-${Date.now()}`, kind: 'error', label: 'Provider error', text, time: Date.now(), ...(code && { code }) }
-      this.messages = [...this.messages, err].slice(-MAX_ITEMS)
-      this.pushTrajectory(err, true)
+    if (!isRecord(envelope)) return
+    const streamId = string(envelope.streamId, 200)
+    const stream = streamId ? this.streams.get(streamId) : undefined
+    const type = string(envelope.type, 40)
+    if (type === 'item' && stream) { stream.onItem(envelope.value); return }
+    if (type === 'error') {
+      const error = isRecord(envelope.error) ? envelope.error : { code: 'stream/error', message: 'Stream failed' }
+      console.warn('[host-bridge] mux stream error:', string(error.code), string(error.message))
+      stream?.onError?.(error)
+      if (stream && !stream.persistent) this.streams.delete(streamId!)
+      else if (!stream) this.pushTrajectory({ id: `stream-${Date.now()}`, kind: 'error', label: 'Agent event stream', text: 'The local Agent event stream needs to reconnect.', time: Date.now() })
+      return
     }
-    if (type === 'host/session-added' || type === 'host/session-removed') void this.listSessions()
+    if (type === 'end' && stream && !stream.persistent) this.streams.delete(streamId!)
+  }
+
+  // ── $events: global session list + provider/settings notifications ────────
+
+  private openEvents(): void {
+    this.openStream(EVENT_STREAM_ENDPOINT, {}, {
+      persistent: true,
+      onItem: (value) => { void this.handleEventFrame(value) },
+    })
+  }
+  private scheduleListRefresh(): void {
+    if (this.listRefreshTimer) return
+    this.listRefreshTimer = setTimeout(() => { this.listRefreshTimer = undefined; if (!this.stopped) void this.listSessions().catch(() => undefined) }, 400)
+  }
+  private async handleEventFrame(value: unknown): Promise<void> {
+    if (!isRecord(value)) return
+    const type = string(value.type, 80)
+    if (type === 'ready') { this.eventClientId = string(value.clientId, 200) ?? ''; return }
+    if (type === 'emit') {
+      const event = string(value.event, 120)
+      const args = Array.isArray(value.args) ? value.args : []
+      const sessionId = validId(args[0])
+      if (event === 'api-session/status' && sessionId) {
+        const running = args[1] === true
+        if (sessionId === this.selectedSessionId) this.running = running
+        this.sessions = this.sessions.map((item) => item.id === sessionId ? { ...item, running } : item)
+        this.emit()
+      } else if (event === 'api-session/error' && sessionId) {
+        const text = string(args[1]) ?? 'The local Agent reported an error.'
+        if (sessionId === this.selectedSessionId) this.cardProviderError(text, Date.now(), `error-${Date.now()}`)
+      } else if (event === 'api-session/added' || event === 'api-session/removed' || event === 'api-session/activity') {
+        this.scheduleListRefresh()
+      }
+      // commands/change, credentials/reference-updated, llm/adapters-updated,
+      // settings/document-updated, goal/*, agent-preset/* are read on demand —
+      // no live action required here.
+      return
+    }
+    if (type === 'waterfall') {
+      // approval/request and user-questions/request are the only waterfalls
+      // the Host forwards. Narwhal does not implement interactive approval /
+      // question UI, so delegate back to the Host chain immediately; leaving
+      // a waterfall unanswered hangs the agent forever.
+      const eventId = string(value.eventId, 200)
+      if (!this.eventClientId || !eventId) return
+      try {
+        await this.rpc(EVENT_RESULT_ENDPOINT, { clientId: this.eventClientId, eventId, outcome: { kind: 'next' } })
+      } catch (error) {
+        console.warn('[host-bridge] waterfall result failed:', error instanceof Error ? error.message : String(error))
+      }
+      return
+    }
+    // type 'cancel' — a pending waterfall was withdrawn; nothing to do.
+  }
+
+  // ── session/follow: snapshot history + live events + assistant stream ─────
+
+  private followStreamId: string | undefined
+
+  private closeFollow(): void { this.closeStream(this.followStreamId); this.followStreamId = undefined }
+
+  private openFollow(sessionId: string): void {
+    this.closeFollow()
+    this.followStreamId = this.openStream('session/follow', {
+      request: { address: { kind: 'session', sessionId }, maxMessages: 200, assistantStream: true },
+    }, {
+      persistent: true,
+      onItem: (value) => this.handleFollowFrame(sessionId, value),
+      onError: () => { /* socket reconnect re-opens the stream */ },
+    })
+  }
+  private handleFollowFrame(sessionId: string, value: unknown): void {
+    if (sessionId !== this.selectedSessionId || !isRecord(value)) return
+    const kind = string(value.type, 40)
+    if (kind === 'snapshot') {
+      const records = Array.isArray(value.records) ? value.records : []
+      for (const record of records) {
+        if (isRecord(record) && isRecord(record.event)) this.ingestEvent(sessionId, record.event)
+      }
+      this.emit()
+      return
+    }
+    // Any live frame proves the agent is alive — feed the inactivity watchdog.
+    if (this.promptWatch?.sessionId === sessionId) this.promptWatch.lastActivity = Date.now()
+    if (kind === 'event') {
+      if (isRecord(value.event)) this.ingestEvent(sessionId, value.event)
+      return
+    }
+    if (kind === 'assistant-stream' && isRecord(value.frame)) this.handleAssistantFrame(value.frame)
+  }
+  private handleAssistantFrame(frame: JsonRecord): void {
+    const sessionId = this.selectedSessionId
+    if (!sessionId) return
+    const type = string(frame.type, 40)
+    if (type === 'start') {
+      const turn = finiteNumber(frame.turn) ?? 0
+      const step = finiteNumber(frame.step) ?? 0
+      const attemptId = string(frame.attemptId, 200)
+      if (attemptId) this.attemptTurns.set(attemptId, { turn, step })
+      this.updateUsage({ data: { turn, step } }, 'step/start', Date.now())
+      return
+    }
+    if (type === 'chunk') {
+      const attemptId = string(frame.attemptId, 200)
+      const coords = attemptId ? this.attemptTurns.get(attemptId) : undefined
+      const chunk = isRecord(frame.chunk) ? frame.chunk : undefined
+      const text = chunk?.type === 'text-delta' ? string(chunk.text) : undefined
+      if (text) {
+        if (coords) {
+          const open = this.openSteps.get(`${coords.turn ?? 'unknown'}:${coords.step}`)
+          if (open && open.firstTokenAt === undefined) open.firstTokenAt = number(frame.time)
+        }
+        this.appendStreamChunk(sessionId, text, number(frame.time))
+      }
+      return
+    }
+    // type 'end': a committed attempt is finalized by the following
+    // assistant/message (or assistant/attempt) event; abandoned ones need no
+    // bubble change. The stream chunk bubble is finalized at turn/end.
+  }
+  private appendStreamChunk(sessionId: string, text: string, time: number): void {
+    const existing = this.messages.find((item) => item.id === `${sessionId}:stream`)
+    const next: ChatItem = { id: `${sessionId}:stream`, kind: 'assistant', text: `${existing?.text ?? ''}${text}`.slice(0, MAX_TEXT), time, streaming: true }
+    this.messages = [...this.messages.filter((item) => item.id !== next.id), next].slice(-MAX_ITEMS)
+    this.emit()
+  }
+  private cardProviderError(text: string, time: number, id: string): void {
+    const code = classifyProviderError(text)
+    if (this.turnErrorSeen(code, text)) return
+    const err: ChatItem = { id, kind: 'error', label: 'Provider error', text, time, ...(code && { code }) }
+    this.messages = [...this.messages, err].slice(-MAX_ITEMS)
+    this.pushTrajectory(err, true)
   }
   private pushTrajectory(item: ChatItem, emit = true): void { this.trajectory = [...this.trajectory, item].slice(-MAX_ITEMS); if (emit) this.emit() }
   /** Returns true when this exact failure was already carded for the CURRENT
-   * turn (DSH can deliver host/agent-error plus turn/end for the same
+   * turn (DSH can deliver api-session/error plus turn/end for the same
    * failure, sometimes with different wrapping). Classified failures match
    * by stable code; unclassified ones keep the original containment-based
    * text comparison. The record resets on every turn/start. */
@@ -336,7 +522,8 @@ export class HostBridge {
       const value = current()
       const message = isRecord(data.message) ? data.message : {}
       const report = isRecord(data.usage) ? data.usage : isRecord(message.usage) ? message.usage : {}
-      const inputTokens = finiteNumber(report.inputTokens) ?? 0
+      // 0.1.5 TokenUsage names the non-cached count uncachedInputTokens.
+      const inputTokens = finiteNumber(report.inputTokens) ?? finiteNumber(report.uncachedInputTokens) ?? 0
       const outputTokens = finiteNumber(report.outputTokens) ?? 0
       this.cacheReadTokens += finiteNumber(report.cacheReadTokens) ?? finiteNumber(report.cachedInputTokens) ?? 0
       if (open.firstTokenAt !== undefined) {
@@ -360,12 +547,6 @@ export class HostBridge {
     }
     if (type === 'user/message' || type === 'assistant/message') {
       const text = eventText(event); if (text) { const item: ChatItem = { id: `${sessionId}:${seq}`, kind: type === 'user/message' ? 'user' : 'assistant', text, time }; this.messages = [...this.messages.filter((entry) => entry.id !== item.id && !(item.kind === 'user' && entry.id.startsWith('accepted-') && entry.text === item.text) && !(item.kind === 'assistant' && entry.id === `${sessionId}:stream`)), item].slice(-MAX_ITEMS) }
-    } else if (type === 'assistant/chunk') {
-      const text = eventText(event); if (text) {
-        const existing = this.messages.find((item) => item.id === `${sessionId}:stream`)
-        const next: ChatItem = { id: `${sessionId}:stream`, kind: 'assistant', text: `${existing?.text ?? ''}${text}`.slice(0, MAX_TEXT), time, streaming: true }
-        this.messages = [...this.messages.filter((item) => item.id !== next.id), next].slice(-MAX_ITEMS)
-      }
     } else {
       const traj = trajectoryFor(event, type)
       if (traj) this.pushTrajectory({ id: `${sessionId}:${seq}`, kind: traj.kind, label: traj.label, text: traj.text, time }, false)
@@ -385,11 +566,7 @@ export class HostBridge {
         if (reason && reason['kind'] === 'error') {
           const detail = isRecord(reason['error']) ? reason['error'] : isRecord(reason['failure']) ? reason['failure'] : {}
           const msg = string(detail['message']) ?? string(reason['error']) ?? string(reason['message']) ?? 'The model provider returned an error.'
-          const code = classifyProviderError(msg)
-          if (!this.turnErrorSeen(code, msg)) {
-            const err: ChatItem = { id: `turn-error-${sessionId}-${seq}`, kind: 'error', label: 'Provider error', text: msg, time, ...(code && { code }) }
-            this.messages = [...this.messages, err].slice(-MAX_ITEMS)
-          }
+          this.cardProviderError(msg, time, `turn-error-${sessionId}-${seq}`)
         }
         this.emit()
         return
@@ -403,21 +580,46 @@ export class HostBridge {
     }
     this.emit()
   }
-  private async rpc<T>(method: 'session.list' | 'session.create' | 'session.history' | 'session.prompt' | 'session.cancel' | 'session.models' | 'session.selectModel' | 'llm.providers' | 'llm.models' | 'settings.describe' | 'settings.mutate' | 'credentials.describe' | 'credentials.set' | 'credentials.unset' | 'skill.list' | 'goal.create' | 'goal.edit' | 'goal.pause' | 'goal.resume' | 'goal.complete' | 'goal.clear', payload: JsonRecord): Promise<T> {
+
+  // ── HTTP RPC (0.1.5 slashed endpoints, named args under payload.args) ─────
+
+  private async rpc<T>(endpoint: string, args: JsonRecord = {}, timeoutMs = 30_000): Promise<T> {
     if (!this.origin) throw new Error('Local Agent is not ready')
-    const response = await fetch(`${this.origin}/api/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }), signal: AbortSignal.timeout(30_000) })
-    if (!response.ok) {
-      const body = await response.text().catch(() => '')
-      throw new Error(`Local Agent HTTP ${response.status} on ${method}: ${body.slice(0, 400)}`)
+    let response: Response
+    try {
+      response = await fetch(`${this.origin}/api/${endpoint}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', Cookie: this.cookie },
+        body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: endpoint, payload: { args } }),
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+    } catch (error) {
+      throw new Error(`Local Agent unreachable for ${endpoint}: ${error instanceof Error ? error.message : String(error)}`)
     }
-    const envelope: unknown = await response.json()
-    if (!isRecord(envelope) || envelope.type !== 'server-response' || !isRecord(envelope.result) || envelope.result.ok !== true) {
-      throw new Error(`Local Agent RPC rejected ${method}: ${JSON.stringify(envelope).slice(0, 400)}`)
+    const bodyText = await response.text().catch(() => '')
+    if (!response.ok) throw new Error(`Local Agent HTTP ${response.status} on ${endpoint}: ${bodyText.slice(0, 400)}`)
+    let envelope: unknown
+    try { envelope = JSON.parse(bodyText) } catch { throw new Error(`Local Agent returned invalid JSON from ${endpoint}: ${bodyText.slice(0, 200)}`) }
+    if (!isRecord(envelope) || envelope.type !== 'server-response' || !isRecord(envelope.result)) {
+      throw new Error(`Local Agent RPC malformed ${endpoint}: ${bodyText.slice(0, 400)}`)
     }
-    return envelope.result.value as T
+    const result = envelope.result
+    if (result.ok !== true) {
+      const error = isRecord(result.error) ? result.error : {}
+      const code = string(error.code, 200) ?? 'rpc/error'
+      const message = string(error.message, 600) ?? 'The Local Agent rejected the request.'
+      const err = new Error(`${message} (${code})`) as Error & { code?: string; details?: unknown }
+      err.code = code
+      if (error.details !== undefined) err.details = error.details
+      throw err
+    }
+    return result.value as T
   }
+
+  // ── Sessions ──────────────────────────────────────────────────────────────
+
   async listSessions(): Promise<AgentConversation> {
-    const value = await this.rpc<{ items?: unknown }>('session.list', {})
+    const value = await this.rpc<{ items?: unknown }>('session/list', { _request: {} })
     const rows = Array.isArray(value.items) ? value.items : []
     this.sessions = rows.flatMap((row): AgentSession[] => {
       if (!isRecord(row)) return []
@@ -429,22 +631,18 @@ export class HostBridge {
     this.emit(); return this.snapshot()
   }
   async createSession(cwd: string): Promise<AgentConversation> {
-    const value = await this.rpc<{ sessionId?: unknown }>('session.create', { cwd })
+    const value = await this.rpc<{ sessionId?: unknown }>('session/create', { request: { cwd } })
     const id = validId(value.sessionId); if (!id) throw new Error('Local Agent returned an invalid session')
-    await this.listSessions(); this.resetSelectedSession(); this.selectedSessionId = id; this.emit(); return this.snapshot()
+    await this.listSessions(); this.resetSelectedSession(); this.selectedSessionId = id; this.openFollow(id); this.emit(); return this.snapshot()
   }
   async selectSession(sessionId: string, cwd: string): Promise<AgentConversation> {
     if (!this.sessions.some((item) => item.id === sessionId)) await this.listSessions()
     const session = this.sessions.find((item) => item.id === sessionId)
     if (!session || session.cwd !== cwd) throw new Error('Conversation is not available in this workspace')
-    this.resetSelectedSession(); this.selectedSessionId = sessionId; this.running = session.running; this.emit()
-    await this.refreshHistory(sessionId)
+    this.resetSelectedSession(); this.selectedSessionId = sessionId; this.running = session.running
+    this.openFollow(sessionId)  // snapshot rehydrates history; live frames keep it current
+    this.emit()
     return this.snapshot()
-  }
-  private async refreshHistory(sessionId: string): Promise<void> {
-    const value = await this.rpc<{ events?: unknown }>('session.history', { sessionId, maxMessages: 100 })
-    const entries = Array.isArray(value.events) ? value.events : []
-    for (const entry of entries) if (isRecord(entry) && isRecord(entry.event)) this.ingestEvent(sessionId, entry.event)
   }
   async prompt(text: string, attachments?: readonly Attachment[]): Promise<AgentConversation> {
     const sessionId = this.selectedSessionId; if (!sessionId) throw new Error('Choose a conversation first')
@@ -455,23 +653,22 @@ export class HostBridge {
     const promptText = (text || 'Please analyze the attached file(s).') + attachmentNote
     const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: promptText }]
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-    await this.rpc('session.prompt', { sessionId, mode: 'queue', content, clientTimeZone: timeZone })
+    // 0.1.5 requires a client-minted requestId on every queued prompt.
+    await this.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId, mode: 'queue', content, clientTimeZone: timeZone } })
     const displayText = text || (hasAttachments ? `Analyzing ${attachments!.length} attachment${attachments!.length !== 1 ? 's' : ''}` : '')
     const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text: displayText, time: Date.now(), attachments: attachments ? [...attachments] : undefined }
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
     this.running = true; this.emit()
-    for (const delay of [1_000, 3_000, 8_000]) setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, delay)
     this.startPromptWatch(sessionId)
     return this.snapshot()
   }
   private startPromptWatch(sessionId: string): void {
     this.stopPromptWatch()
     // Inactivity — not wall-clock — timeout: a turn stays alive as long as
-    // events keep arriving over the live mux stream. The 60s allowance covers
-    // slow-to-first-token reasoning models and gateways that stall before
-    // responding (observed: ~20s TCP stall, then a stream error); only TOTAL
-    // silence past that — no events at all — means the turn is stuck with
-    // nothing to show, so fail with an honest message and cancel.
+    // follow frames keep arriving. The 60s allowance covers slow-to-first-token
+    // reasoning models and gateways that stall before responding; only TOTAL
+    // silence past that means the turn is stuck, so fail with an honest
+    // message and cancel.
     const IDLE_LIMIT_MS = 60_000
     const watch = { sessionId, lastActivity: Date.now(), timer: undefined as unknown as NodeJS.Timeout }
     watch.timer = setInterval(() => {
@@ -496,33 +693,45 @@ export class HostBridge {
   }
   async cancel(): Promise<void> {
     this.stopPromptWatch()
-    if (this.selectedSessionId) { await this.rpc('session.cancel', { sessionId: this.selectedSessionId }); this.running = false; this.emit() }
+    if (this.selectedSessionId) { await this.rpc('session/cancel', { request: { sessionId: this.selectedSessionId } }); this.running = false; this.emit() }
   }
+
+  // ── Slash commands + skills ───────────────────────────────────────────────
+
   async listCommands(): Promise<{ name: string; description: string; input?: { hint?: string; images?: boolean } }[]> {
-    // Hardcoded built-in commands (same 6 registered by dsh-command-* packages)
-    type Cmd = { name: string; description: string; input?: { hint?: string; images?: boolean } }
-    const builtin: Cmd[] = [
-      { name: 'compact', description: 'Compress the conversation context to save tokens' },
-      { name: 'export', description: 'Export the current conversation as a zip file' },
-      { name: 'goal', description: 'Manage long-term goals for this conversation', input: { hint: 'objective | clear | pause | resume' } },
-      { name: 'plan', description: 'Toggle plan mode — the agent will plan before acting' },
-      { name: 'permission', description: 'Show or change the operation permission preset', input: { hint: 'preset name' } },
-      { name: 'feedback', description: 'Send feedback to the DeepSeek Harness team' },
-    ]
-    // DSH exposes skill.list over HTTP — fetch any skills the Host currently has loaded
+    type Cmd = { name: string; description: string; input?: { hint?: string; images?: boolean; attachments?: boolean } }
+    let commands: Cmd[] = []
+    if (this.selectedSessionId) {
+      try {
+        const live = await this.rpc<unknown[]>('commands/list', { agentId: this.selectedSessionId })
+        commands = Array.isArray(live) ? live.flatMap((row) => isRecord(row) && typeof row.name === 'string' && typeof row.description === 'string'
+          ? [{ name: row.name, description: row.description, ...(isRecord(row.input) ? { input: { hint: string(row.input.hint, 200), attachments: row.input.attachments === true } } : {}) }]
+          : []) : []
+      } catch (e) { console.warn('[narwhal] commands/list failed:', e) }
+    }
+    if (commands.length === 0) {
+      // Fallback mirror of the six commands 0.1.5 registers out of the box.
+      commands = [
+        { name: 'compact', description: 'Compact older conversation history' },
+        { name: 'export', description: 'Download this Session log as a ZIP archive' },
+        { name: 'feedback', description: 'Record feedback about this session', input: { hint: '<text>' } },
+        { name: 'goal', description: 'Set or view the goal for a long-running task', input: { hint: '[<objective>|clear|edit <objective>|pause|resume]' } },
+        { name: 'permission', description: 'Switch the permission preset (sandbox mode + approval policy)', input: { hint: '<preset>' } },
+        { name: 'plan', description: 'Enter or leave plan mode', input: { hint: '[off|message]' } },
+      ]
+    }
     let skillList: { name: string; description: string }[] = []
     try {
       if (this.selectedSessionId) {
-        const value = await this.rpc<{ skills?: unknown[] }>('skill.list', { sessionId: this.selectedSessionId })
+        const value = await this.rpc<{ skills?: unknown[] }>('skills/list', { request: { sessionId: this.selectedSessionId } })
         skillList = (value.skills ?? []).flatMap((row) => {
           if (!isRecord(row) || typeof row.name !== 'string' || typeof row.description !== 'string') return []
           return [{ name: row.name, description: row.description }]
         })
       }
-    } catch (e) { console.warn('[narwhal] skill.list failed:', e) }
-    // De-dup: builtin wins over skills with the same name
-    const seen = new Set(builtin.map((c) => c.name))
-    const result = [...builtin]
+    } catch (e) { console.warn('[narwhal] skills/list failed:', e) }
+    const seen = new Set(commands.map((c) => c.name))
+    const result: { name: string; description: string; input?: { hint?: string; images?: boolean } }[] = [...commands]
     for (const s of skillList) if (!seen.has(s.name)) { result.push({ ...s, input: { hint: 'optional arguments' } }); seen.add(s.name) }
     return result
   }
@@ -532,75 +741,53 @@ export class HostBridge {
     const match = line.match(/^\/([A-Za-z0-9_-]+)(?:\s*(.*))?$/s)
     if (!match) return { kind: 'error', text: 'Invalid slash command format' }
     const name = match[1].toLowerCase()
-    const args = (match[2] ?? '').trim()
     const sessionId = this.selectedSessionId
     try {
-      switch (name) {
-        case 'goal':  return this.execGoal(sessionId, args)
-        case 'plan':    return this.execPlan(sessionId, args)
-        case 'compact': return this.execCompact(sessionId)
-        case 'permission': return this.execPermission(sessionId, args)
-        case 'export': return this.execExport(sessionId)
-        case 'feedback': return this.execFeedback(sessionId, args)
-        default: {
-          // Unknown command — could be a skill. Try to dispatch via session.prompt so the
-          // model sees it. This is a graceful degradation for future skill-loaded sessions.
-          const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
-          await this.rpc<unknown>('session.prompt', { sessionId, mode: 'queue', content: [{ type: 'text', text: line }], clientTimeZone: timeZone })
-          this.running = true; this.emit()
-          for (const delay of [1000, 3000, 6000]) setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, delay)
-          return { kind: 'success' }
-        }
+      if (name === 'goal' && (match[2] ?? '').trim() === '') return this.execGoalView(sessionId)
+      // Every built-in command is dispatched natively in 0.1.5 (compact,
+      // export, feedback, goal, permission, plan). compaction can run long,
+      // so give the RPC a generous timeout.
+      const native = new Set(['compact', 'export', 'feedback', 'goal', 'permission', 'plan'])
+      if (native.has(name)) {
+        const normalized = name === 'permission' ? this.normalizePermissionLine(line) : line
+        const out = await this.rpc<{ result?: { kind?: string; text?: string } } | undefined>('commands/execute', { agentId: sessionId, line: normalized, submittedAttachments: [] }, 120_000)
+        if (out === undefined) return { kind: 'error', text: `Unknown command: /${name}` }
+        const result = out.result ?? {}
+        return { kind: result.kind === 'error' ? 'error' : 'success', ...(typeof result.text === 'string' ? { text: result.text } : {}) }
       }
+      // Unknown command — could be a skill. Queue it as a prompt so the model
+      // sees it. Graceful degradation for skill-loaded sessions.
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      await this.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId, mode: 'queue', content: [{ type: 'text', text: line }], clientTimeZone: timeZone } })
+      this.running = true; this.emit()
+      this.startPromptWatch(sessionId)
+      return { kind: 'success' }
     } catch (e) {
       console.warn('[narwhal] executeCommand failed:', e)
-      return { kind: 'error', text: String(e) }
+      return { kind: 'error', text: e instanceof Error ? e.message : String(e) }
     }
   }
-  private async execGoal(sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
-    const control = args.toLowerCase()
-    if (!args) {
-      const current = await this.fetchCurrentGoal(sessionId)
-      if (!current) return { kind: 'success', text: 'No active goal. Use `/goal <objective>` to set one.' }
-      const phase = current.goal.phase ?? 'unknown'
-      return { kind: 'success', text: `Current goal (${phase}): "${current.goal.objective}"` }
-    }
-    if (control === 'clear' || control === 'pause' || control === 'resume') {
-      const current = await this.fetchCurrentGoal(sessionId)
-      if (!current) return { kind: 'error', text: 'No active goal to operate on.' }
-      const op = `goal.${control}` as const
-      const result = await this.rpc<{ ref?: { id: string; revision: number } }>(op, { sessionId, ref: { id: current.goal.id, revision: current.goal.revision } })
-      // pause/resume return new ref with bumped revision; clear may return empty
-      if (result?.ref) current.goal = { ...current.goal, ...result.ref }
-      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
-      return { kind: 'success', text: `Goal ${control}${control.endsWith('e') ? 'd' : 'ed'}.` }
-    }
-    if (control.startsWith('edit')) {
-      const objective = args.slice(4).trim()
-      if (!objective) return { kind: 'error', text: 'Usage: /goal edit <new objective>' }
-      const current = await this.fetchCurrentGoal(sessionId)
-      if (!current) return { kind: 'error', text: 'No active goal to edit.' }
-      const result = await this.rpc<{ ref?: { id: string; revision: number } }>('goal.edit', { sessionId, ref: { id: current.goal.id, revision: current.goal.revision }, objective })
-      if (result?.ref) current.goal = { ...current.goal, ...result.ref }
-      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
-      return { kind: 'success', text: `Goal updated: "${objective}"` }
-    }
-    // Treat remaining text as a new goal objective
-    const result = await this.rpc<{ ref?: { id: string; revision: number } }>('goal.create', { sessionId, objective: args })
-    setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
-    if (result?.ref) return { kind: 'success', text: `Goal set: "${args}" (${result.ref.id.slice(-8)})` }
-    return { kind: 'success', text: `Goal set: "${args}"` }
+  private normalizePermissionLine(line: string): string {
+    // 0.1.5 preset ids: read-only | workspace-write | danger-full-access.
+    const aliases: Record<string, string> = { safe: 'workspace-write', 'full-access': 'danger-full-access' }
+    return line.replace(/^(\/permission\s+)(\S+)\s*$/u, (whole, head: string, preset: string) => `${head}${aliases[preset] ?? preset}`)
+  }
+  /** /goal with no args — read the live goal projection from session/list. */
+  private async execGoalView(sessionId: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    const current = await this.fetchCurrentGoal(sessionId)
+    if (!current) return { kind: 'success', text: 'No active goal. Use `/goal <objective>` to set one.' }
+    const phase = current.goal.phase ?? 'unknown'
+    return { kind: 'success', text: `Current goal (${phase}): "${current.goal.objective}"` }
   }
   /** Fetch the current session's goal ref from the session list projection. */
   private async fetchCurrentGoal(sessionId: string): Promise<{ goal: { id: string; revision: number; objective: string; phase?: string } } | undefined> {
     try {
-      const list = await this.rpc<{ items?: unknown[] }>('session.list', {})
+      const list = await this.rpc<{ items?: unknown[] }>('session/list', { _request: {} })
       const items = list?.items ?? []
       for (const raw of items) {
-        if (!isRecord(raw)) continue
-        if (raw.sessionId !== sessionId) continue
+        if (!isRecord(raw) || raw.sessionId !== sessionId) continue
         const projsObj = raw.projections as Record<string, unknown> | undefined
-      const projs = (projsObj && isRecord(projsObj.values) ? projsObj.values : null) as Record<string, unknown> | null
+        const projs = (projsObj && isRecord(projsObj.values) ? projsObj.values : null) as Record<string, unknown> | null
         const goal = projs && isRecord(projs.goal) ? projs.goal : null
         const inner = goal && isRecord(goal.goal) ? goal.goal : null
         if (inner && typeof inner.id === 'string' && typeof inner.revision === 'number') {
@@ -611,155 +798,86 @@ export class HostBridge {
     } catch { /* ignore */ }
     return undefined
   }
-  private async execPermission(_sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
-    // The setDefaultPermission path is already exposed through select-agent-model / set-default-permission IPC
-    // We can reuse it: credentials.set with the preset name. For now just show current state.
-    if (!args) {
-      return { kind: 'success', text: 'Use the permission dropdown in the composer bar to switch presets (Workspace Write, Safe, etc.).' }
-    }
-    // Map common preset aliases to the internal names used by setDefaultPermission
-    const presets = new Set<string>(['workspace-write', 'safe', 'read-only', 'full-access'])
-    if (!presets.has(args)) {
-      return { kind: 'error', text: `Unknown permission preset "${args}". Valid: workspace-write, safe, read-only, full-access.` }
-    }
-    await this.setDefaultPermission(args)
-    return { kind: 'success', text: `Permission preset set to "${args}".` }
-  }
-  private async execExport(sessionId: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
-    if (!this.origin) return { kind: 'error', text: 'Host not ready' }
-    const url = `${this.origin}/api/session.export?sessionId=${encodeURIComponent(sessionId)}`
-    // We can't trigger a browser download from Node. Instead return the URL and let the renderer open it.
-    return { kind: 'success', text: `Download: ${url}` }
-  }
 
-  // ── Narwhal plugin endpoints (direct fetch, not rpc envelope) ───────────
+  // ── Configuration: providers, models, permission ──────────────────────────
 
-  /** Fetch helper that talks directly to the narwhal-commands cordis patch plugin. */
-  private async narwhalFetch(path: string, body: JsonRecord): Promise<Record<string, unknown>> {
-    if (!this.origin) throw new Error('Local Agent is not ready')
-    const response = await fetch(`${this.origin}${path}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15_000),
-    })
-    const data = await response.json().catch(() => ({})) as Record<string, unknown>
-    if (!response.ok || data.ok !== true) {
-      const msg = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`
-      throw new Error(msg)
-    }
-    return data
+  private async settingsDescribe(): Promise<{ writable: boolean; namespaces: JsonRecord[] }> {
+    const value = await this.rpc<{ writable?: unknown; namespaces?: unknown }>('settings/describe', {})
+    return { writable: value.writable === true, namespaces: Array.isArray(value.namespaces) ? value.namespaces.filter(isRecord) : [] }
   }
-
-  /** /plan  — toggle plan mode on/off for the session. */
-  private async execPlan(sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
-    const control = args.toLowerCase()
-    let active: boolean
-    if (control === 'off' || control === 'false') {
-      active = false
-    } else if (!control || control === 'on' || control === 'true') {
-      active = true
-    } else {
-      return { kind: 'error', text: 'Usage: /plan [on|off]' }
-    }
-    try {
-      await this.narwhalFetch('/api/narwhal/plan', { sessionId, active })
-      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 500)
-      return { kind: 'success', text: `Plan mode ${active ? 'enabled' : 'disabled'}.` }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return { kind: 'error', text: `/plan failed: ${msg}` }
-    }
-  }
-
-  /** /feedback  — record a feedback entry on the session. */
-  private async execFeedback(sessionId: string, args: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
-    if (!args.trim()) return { kind: 'error', text: 'Usage: /feedback <your feedback text>' }
-    try {
-      await this.narwhalFetch('/api/narwhal/feedback', { sessionId, text: args })
-      return { kind: 'success', text: 'Feedback recorded. Thank you!' }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return { kind: 'error', text: `/feedback failed: ${msg}` }
-    }
-  }
-
-  /** /compact  — trigger manual compaction on the session. */
-  private async execCompact(sessionId: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
-    try {
-      const data = await this.narwhalFetch('/api/narwhal/compact', { sessionId })
-      if (data.compacted === false) {
-        return { kind: 'success', text: typeof data.reason === 'string' ? data.reason : 'No compactable history yet.' }
-      }
-      const seqs = typeof data.shadowedSeqs === 'number' ? data.shadowedSeqs : 0
-      const tokens = typeof data.shadowedTokens === 'number' ? data.shadowedTokens : 0
-      setTimeout(() => { if (this.selectedSessionId === sessionId) void this.refreshHistory(sessionId).catch(() => undefined) }, 1000)
-      return { kind: 'success', text: `Compacted ${seqs} history items (~${tokens} tokens).` }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      return { kind: 'error', text: `/compact failed: ${msg}` }
-    }
+  private async configurableProviders(): Promise<JsonRecord[]> {
+    // Every route the pi-ai adapter knows about (declared or catalog-only),
+    // plus built-ins such as deepseek-official.
+    const value = await this.rpc<unknown[]>('llm/listConfigurableProviders', {})
+    return Array.isArray(value) ? value.filter(isRecord) : []
   }
 
   private async configuration(): Promise<AgentConfiguration> {
     try {
-      const [providersResult, modelsResult, settingsResult, sessionModelsResult] = await Promise.allSettled([
-        this.rpc<{ providers?: unknown }>('llm.providers', {}),
-        this.rpc<{ groups?: unknown }>('llm.models', {}),
-        this.rpc<{ writable?: unknown; namespaces?: unknown }>('settings.describe', {}),
-        this.selectedSessionId ? this.rpc<{ current?: unknown }>('session.models', { sessionId: this.selectedSessionId }) : Promise.resolve<{ current?: unknown }>({}),
+      const [activeResult, catalogResult, settingsResult] = await Promise.allSettled([
+        this.rpc<unknown[]>('llm/listProviders', {}),
+        this.rpc<{ default?: unknown; groups?: unknown }>('session/modelCatalog', {}),
+        this.settingsDescribe(),
       ])
+      const activeProviders = activeResult.status === 'fulfilled' && Array.isArray(activeResult.value)
+        ? new Set(activeResult.value.flatMap((row) => isRecord(row) && typeof row.id === 'string' ? [row.id] : []))
+        : new Set<string>()
+      const catalogValue = catalogResult.status === 'fulfilled' ? catalogResult.value : { groups: [] as unknown[] }
+      if (activeResult.status === 'rejected') this.pushTrajectory({ id: `cfg-providers-${Date.now()}`, kind: 'error', label: 'Provider list unavailable', text: 'Some provider data could not be loaded.', time: Date.now() })
+      if (catalogResult.status === 'rejected') this.pushTrajectory({ id: `cfg-models-${Date.now()}`, kind: 'error', label: 'Model list unavailable', text: 'Some model data could not be loaded.', time: Date.now() })
+      const { writable, namespaces } = settingsResult.status === 'fulfilled' ? settingsResult.value : { writable: false, namespaces: [] as JsonRecord[] }
 
-      // Each RPC is independently validated — a single failure does not block the others
-      const providersValue = providersResult.status === 'fulfilled' ? providersResult.value : { providers: [] as unknown[] }
-      const modelsValue = modelsResult.status === 'fulfilled' ? modelsResult.value : { groups: [] as unknown[] }
-      const settingsValue = settingsResult.status === 'fulfilled' ? settingsResult.value : { writable: false, namespaces: [] as unknown[] }
-      const sessionModels = sessionModelsResult.status === 'fulfilled' ? sessionModelsResult.value : { current: undefined as unknown }
-
-      if (providersResult.status === 'rejected') this.pushTrajectory({ id: `cfg-providers-${Date.now()}`, kind: 'error', label: 'Provider list unavailable', text: 'Some provider data could not be loaded.', time: Date.now() })
-      if (modelsResult.status === 'rejected') this.pushTrajectory({ id: `cfg-models-${Date.now()}`, kind: 'error', label: 'Model list unavailable', text: 'Some model data could not be loaded.', time: Date.now() })
-      const namespaces = Array.isArray(settingsValue.namespaces) ? settingsValue.namespaces.filter(isRecord) : []
-      const providers = Array.isArray(providersValue.providers) ? providersValue.providers.filter(isRecord) : []
-      const references = providers.flatMap((provider) => {
-        const id = validId(provider.provider); const ns = string(provider.settingsNs, 120); const path = Array.isArray(provider.settingsPath) && provider.settingsPath.every((part) => typeof part === 'string') ? provider.settingsPath as string[] : []
-        const settings = id && ns ? namespaces.find((entry) => entry.ns === ns) : undefined; const profile = settings && isRecord(settings.value) ? valueAt(settings.value, path) : undefined
-        return id && isRecord(profile) ? [credentialRefFor(id, profile)] : []
-      }).filter((reference): reference is string => reference !== undefined)
-      const credentials = references.length ? await this.rpc<{ credentials?: unknown }>('credentials.describe', { refs: references }) : { credentials: {} }
-      const credentialMap = isRecord(credentials.credentials) ? credentials.credentials : {}
-      const normalizedProviders: ProviderSetting[] = providers.flatMap((provider) => {
-        const id = validId(provider.provider); const name = string(provider.displayName, 120); const ns = string(provider.settingsNs, 120); const path = Array.isArray(provider.settingsPath) && provider.settingsPath.every((part) => typeof part === 'string') ? provider.settingsPath as string[] : []
-        const settings = id && ns ? namespaces.find((entry) => entry.ns === ns) : undefined; const profile = settings && isRecord(settings.value) ? valueAt(settings.value, path) : undefined
-        if (!id || !name || !isRecord(profile)) return []
-        const reference = credentialRefFor(id, profile); const credential = reference && isRecord(credentialMap[reference]) ? credentialMap[reference] : undefined
-        return [{ id, name, active: provider.active === true, apiKeyConfigured: credential?.configured === true, apiKeyWritable: credential?.writable === true, baseUrl: string(profile.baseURL, 600) ?? string(profile.baseUrl, 600), protocol: string(profile.api, 80) }]
+      const configurable = await this.configurableProviders().catch(() => [] as JsonRecord[])
+      const nsById = new Map(namespaces.map((ns) => [string(ns.ns, 120), ns]))
+      const profileAt = (ns: string | undefined, path: readonly string[]): JsonRecord | undefined => {
+        if (!ns) return undefined
+        const section = nsById.get(ns)
+        if (!section || !isRecord(section.value)) return undefined
+        const profile = path.length === 0 ? section.value : valueAt(section.value, path)
+        return isRecord(profile) ? profile : undefined
+      }
+      // Provider rows worth showing: declared (configured) rows plus anything
+      // Narwhal's own config.json knows about (covers settings.yaml-provisioned
+      // providers across restarts).
+      const cfg = getConfig()
+      const configIds = new Set(Object.keys(cfg.providers ?? {}))
+      const rows = configurable.filter((row) => row.declared === true || (typeof row.provider === 'string' && configIds.has(row.provider)))
+      const references: string[] = []
+      const coords = rows.flatMap((row) => {
+        const id = validId(row.provider); const ns = string(row.settingsNs, 120)
+        const path = Array.isArray(row.settingsPath) && row.settingsPath.every((p) => typeof p === 'string') ? row.settingsPath as string[] : []
+        const profile = id ? profileAt(ns, path) : undefined
+        const ref = id && profile ? credentialRefFor(id, profile) : undefined
+        if (id && ref) references.push(ref)
+        return id ? [{ id, ns, path, profile, ref, displayName: string(row.displayName, 120) }] : []
       })
-      // Merge custom providers from config.json that DSH's llm.providers RPC
-      // does not expose (DSH only returns built-in providers). This makes
-      // UI show custom providers even before DSH's model registry picks them up.
-      try {
-        const cfg = getConfig()
-        const existingIds = new Set(normalizedProviders.map((p) => p.id))
-        for (const [idRaw, profile] of Object.entries(cfg.providers ?? {})) {
-          if (existingIds.has(idRaw)) continue
-          if (!isRecord(profile)) continue
-          const id = validId(idRaw); const name = string(profile.displayName, 120) ?? id
-          if (!id || !name) continue
-          // Use credentialRefFor so empty/missing apiKeyEnv falls through to
-          // the derived name — DSH expects a valid non-empty ref to look up
-          // the stored key, and this matches what the DSH settings write path uses.
-          const ref = credentialRefFor(id, profile)
-          const credential = ref && isRecord(credentialMap[ref]) ? credentialMap[ref] : undefined
-          normalizedProviders.push({
-            id, name,
-            active: true,
-            apiKeyConfigured: credential?.configured === true,
-            apiKeyWritable: credential !== undefined,
-            baseUrl: string(profile.baseURL, 600),
-            protocol: string(profile.api, 80) ?? 'openai-completions',
-          })
-        }
-      } catch { /* config read is best-effort */ }
+      // config.json providers the Host does not list at all.
+      for (const idRaw of configIds) {
+        if (coords.some((c) => c.id === idRaw)) continue
+        const profile = isRecord(cfg.providers?.[idRaw]) ? cfg.providers![idRaw] as JsonRecord : undefined
+        const id = validId(idRaw)
+        const ref = id && profile ? credentialRefFor(id, profile) : undefined
+        if (id && ref) references.push(ref)
+        if (id) coords.push({ id, ns: undefined, path: [], profile: profile ?? undefined, ref, displayName: profile ? string(profile.displayName, 120) ?? id : id })
+      }
+      const credentialMap: Record<string, { configured?: boolean; writable?: boolean }> = references.length
+        ? await this.rpc<Record<string, { configured?: boolean; writable?: boolean }>>('credentials/describe', { refs: references }).catch(() => ({}))
+        : {}
+      const normalizedProviders: ProviderSetting[] = coords.flatMap((c) => {
+        const profile = c.profile ?? (isRecord(cfg.providers?.[c.id]) ? cfg.providers![c.id] as JsonRecord : undefined)
+        if (!profile) return []
+        const name = c.displayName ?? string(profile.displayName, 120) ?? c.id
+        const credential = c.ref && isRecord(credentialMap[c.ref]) ? credentialMap[c.ref] : undefined
+        return [{
+          id: c.id,
+          name,
+          active: activeProviders.has(c.id),
+          apiKeyConfigured: credential?.configured === true,
+          apiKeyWritable: credential ? credential.writable === true : c.ref !== undefined,
+          baseUrl: string(profile.baseURL, 600),
+          protocol: string(profile.api, 80) ?? 'openai-completions',
+        }]
+      })
       function detectProtocol(protocol: string | undefined, providerId: string, baseUrl: string | undefined, modelIds: string[]): string {
         if (protocol) return protocol
         const lowerId = providerId.toLowerCase()
@@ -774,9 +892,9 @@ export class HostBridge {
         if (hasAnthropicPattern) return 'anthropic'
         return ''
       }
-      const providerInfoMap = new Map<string, { protocol: string, baseUrl: string | undefined }>()
+      const providerInfoMap = new Map<string, { protocol: string; baseUrl: string | undefined }>()
       for (const p of normalizedProviders) { providerInfoMap.set(p.id, { protocol: p.protocol ?? '', baseUrl: p.baseUrl }) }
-      const models: ModelProvider[] = (Array.isArray(modelsValue.groups) ? modelsValue.groups : []).flatMap((group) => {
+      const models: ModelProvider[] = (Array.isArray(catalogValue.groups) ? catalogValue.groups : []).flatMap((group) => {
         if (!isRecord(group)) return []; const id = validId(group.id); const name = string(group.name, 120); const modelRows = Array.isArray(group.models) ? group.models : []
         if (!id || !name) return []
         const info = providerInfoMap.get(id) ?? { protocol: '', baseUrl: undefined }
@@ -792,7 +910,7 @@ export class HostBridge {
           // OpenAI-compatible models get the full five-level ladder and
           // Anthropic models low/medium/high. Displayed in the UI; the host
           // persists the pick per model and degrades gracefully if DSH
-          // rejects session.selectModel with an effort the model lacks.
+          // rejects session/selectModel with an effort the model lacks.
           const useFallbackEfforts = rawEfforts.length === 0 && (isOpenAI || isAnthropic)
           const fallbackEfforts = useFallbackEfforts ? fallbackReasoningEfforts(protocol) : []
           const efforts = useFallbackEfforts ? fallbackEfforts : rawEfforts
@@ -800,59 +918,74 @@ export class HostBridge {
           return [{ id: modelId, name: modelName, description: string(model.description, 300), efforts, defaultEffort, effortsNative: !useFallbackEfforts }]
         }) }]
       })
-      // Also merge models from config.json for custom providers that DSH's
-      // llm.models RPC doesn't expose. This lets ProviderRow show the model
-      // list and the "Select model" button stays enabled.
-      try {
-        const cfg = getConfig()
-        const modelGroupIds = new Set(models.map((m) => m.id))
-        for (const [idRaw, profile] of Object.entries(cfg.providers ?? {})) {
-          if (modelGroupIds.has(idRaw)) continue
-          if (!isRecord(profile) || !Array.isArray(profile.models)) continue
-          const groupId = validId(idRaw); const groupName = string(profile.displayName, 120) ?? groupId
-          if (!groupId || !groupName) continue
-          const info = providerInfoMap.get(groupId) ?? { protocol: '', baseUrl: string(profile.baseURL, 600) }
-          const flatModelIds = profile.models.flatMap((m) => string(isRecord(m) ? m.id : undefined, 160) ?? [])
-          const protocol = detectProtocol(info.protocol, groupId, info.baseUrl, flatModelIds)
-          const providerModels = profile.models.flatMap((m) => {
-            if (!isRecord(m)) return []
-            const mid = string(m.id, 160); const mname = string(m.name, 160) ?? mid
-            if (!mid || !mname) return []
-            const isOpenAI = protocol.includes('openai')
-            const isAnthropic = protocol.includes('anthropic')
-            const useFallbackEfforts = isOpenAI || isAnthropic
-            const fallbackEfforts = useFallbackEfforts ? fallbackReasoningEfforts(protocol) : []
-            // Fallback efforts show in the UI; the host persists the pick and
-            // drops it only if DSH rejects the effort at session.selectModel.
-            return [{ id: mid, name: mname, description: '', efforts: fallbackEfforts, defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
-          })
-          if (providerModels.length) models.push({ id: groupId, name: groupName, models: providerModels })
-        }
-      } catch { /* best-effort */ }
-      const permission = namespaces.find((entry) => entry.ns === 'permission'); const permissionValue = permission && isRecord(permission.value) ? permission.value : {}; const current = isRecord(sessionModels.current) ? sessionModels.current : undefined
-      // Build selectedModel: prefer DSH session.current (authoritative for native-effort
-      // models); fall back to the per-model preference stored in config.json for
-      // fallback-effort providers (OpenAI-compatible) whose effort DSH never stores.
-      const currentProvider = current ? string(current.provider, 120) : undefined
-      const currentModel = current ? string(current.model, 160) : undefined
-      const baseReasoning = current ? string(current.reasoningEffort, 100) : undefined
+      // Also merge models from config.json for custom providers the catalog
+      // does not expose (pi-ai routes with hand-declared model lists).
+      const modelGroupIds = new Set(models.map((m) => m.id))
+      for (const [idRaw, profile] of Object.entries(cfg.providers ?? {})) {
+        if (modelGroupIds.has(idRaw) || !isRecord(profile) || !Array.isArray(profile.models)) continue
+        const groupId = validId(idRaw); const groupName = string(profile.displayName, 120) ?? groupId
+        if (!groupId || !groupName) continue
+        const info = providerInfoMap.get(groupId) ?? { protocol: '', baseUrl: string(profile.baseURL, 600) }
+        const flatModelIds = profile.models.flatMap((m) => string(isRecord(m) ? m.id : undefined, 160) ?? [])
+        const protocol = detectProtocol(info.protocol, groupId, info.baseUrl, flatModelIds)
+        const providerModels = profile.models.flatMap((m) => {
+          if (!isRecord(m)) return []
+          const mid = string(m.id, 160); const mname = string(m.name, 160) ?? mid
+          if (!mid || !mname) return []
+          const isOpenAI = protocol.includes('openai')
+          const isAnthropic = protocol.includes('anthropic')
+          const useFallbackEfforts = isOpenAI || isAnthropic
+          const fallbackEfforts = useFallbackEfforts ? fallbackReasoningEfforts(protocol) : []
+          return [{ id: mid, name: mname, description: '', efforts: fallbackEfforts, defaultEffort: useFallbackEfforts ? 'medium' : undefined, effortsNative: false }]
+        })
+        if (providerModels.length) models.push({ id: groupId, name: groupName, models: providerModels })
+      }
+      const permission = namespaces.find((entry) => string(entry.ns, 100) === 'permission')
+      const permissionValue = permission && isRecord(permission.value) ? permission.value : {}
+      // Selected model: the live session projection wins; otherwise the
+      // catalog's global default; a per-model local preference fills effort.
+      let selected: { provider: string; model: string; reasoningEffort?: string } | undefined
+      const liveSelection = await this.liveModelSelection()
+      const catalogDefault = isRecord(catalogValue.default) ? catalogValue.default : undefined
+      const currentProvider = string(liveSelection?.provider ?? catalogDefault?.provider, 120)
+      const currentModel = string(liveSelection?.model ?? catalogDefault?.model, 160)
+      const baseReasoning = string(liveSelection?.reasoningEffort ?? catalogDefault?.reasoningEffort, 100)
       let prefReasoning: string | undefined
       try {
         if (currentProvider && currentModel) prefReasoning = string(getConfig().modelPreferences?.[`${currentProvider}/${currentModel}`]?.reasoningEffort, 100)
       } catch { /* ignore */ }
       const finalReasoningEffort = baseReasoning ?? prefReasoning
-      return { available: true, writable: settingsValue.writable === true, providers: normalizedProviders, models, defaultPermission: string(permissionValue.defaultPreset, 100), permissionOptions: permission ? permissionOptions(permission.schema) : [], customProvider: customProviderCapability(namespaces, settingsValue.writable === true), selectedModel: currentProvider && currentModel ? { provider: currentProvider, model: currentModel, reasoningEffort: finalReasoningEffort } : undefined }
+      if (currentProvider && currentModel) selected = { provider: currentProvider, model: currentModel, ...(finalReasoningEffort ? { reasoningEffort: finalReasoningEffort } : {}) }
+      return { available: true, writable, providers: normalizedProviders, models, defaultPermission: string(permissionValue.defaultPreset, 100), permissionOptions: permission ? permissionOptions(permission.schema) : [], customProvider: customProviderCapability(namespaces, writable), selectedModel: selected }
     } catch (error) { return { available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [], reason: 'Local Agent configuration is unavailable.' }, error: error instanceof Error ? error.message : 'Local Agent configuration is unavailable' } }
   }
+  /** modelSelection.lastUsed for the selected session from session/list projections. */
+  private async liveModelSelection(): Promise<{ provider?: unknown; model?: unknown; reasoningEffort?: unknown } | undefined> {
+    if (!this.selectedSessionId) return undefined
+    try {
+      const list = await this.rpc<{ items?: unknown[] }>('session/list', { _request: {} })
+      for (const raw of list.items ?? []) {
+        if (!isRecord(raw) || raw.sessionId !== this.selectedSessionId) continue
+        const values = isRecord(raw.projections) && isRecord(raw.projections.values) ? raw.projections.values : undefined
+        // 0.1.5 keeps two slots: `next` is the selection that will serve the
+        // next turn (updated immediately by session/selectModel); lastUsed
+        // only changes once a turn actually ran. The model button must mirror
+        // the pending `next`, otherwise the UI snaps back to the old model.
+        const modelSelection = values && isRecord(values.modelSelection) ? values.modelSelection : undefined
+        const selection = modelSelection && (isRecord(modelSelection.next) ? modelSelection.next : isRecord(modelSelection.lastUsed) ? modelSelection.lastUsed : undefined)
+        return selection
+      }
+    } catch { /* best-effort */ }
+    return undefined
+  }
   async getConfiguration(): Promise<AgentConfiguration> { return this.configuration() }
+  private isReasoningUnsupported(err: unknown): boolean {
+    // rpc() throws Error with stable DSH code "model-unavailable" when a
+    // reasoning effort is not supported by the selected model.
+    return err instanceof Error && (err as Error & { code?: string }).code === 'session/model-unavailable'
+      && err.message.includes('reasoning effort')
+  }
   async selectModel(provider: string, model: string, explicitEffort?: string): Promise<AgentConfiguration> {
-    const isReasoningUnsupported = (err: unknown) => {
-      // rpc() throws plain Error with message containing the DSH envelope JSON, e.g.:
-      //   "Local Agent RPC rejected session.selectModel: {\"result\":{\"ok\":false,\"error\":{\"code\":\"model-unavailable\",\"message\":\"... does not support reasoning effort ...\"}}}"
-      if (!(err instanceof Error)) return false
-      const msg = err.message
-      return msg.includes('"code":"model-unavailable"') && msg.includes('reasoning effort')
-    }
     const prefKey = `${provider}/${model}`
     // Distinguish two intents:
     //   • explicit effort change (3rd arg provided) → persist per-model preference
@@ -879,28 +1012,27 @@ export class HostBridge {
     // (the effort is still remembered locally in modelPreferences).
     if (this.selectedSessionId) {
       try {
-        await this.rpc('session.selectModel', { sessionId: this.selectedSessionId, provider, model, ...(effectiveEffort && { reasoningEffort: effectiveEffort }) })
+        await this.rpc('session/selectModel', { request: { sessionId: this.selectedSessionId, provider, model, ...(effectiveEffort && { reasoningEffort: effectiveEffort }) } })
       } catch (err) {
-        if (effectiveEffort && isReasoningUnsupported(err)) {
+        if (effectiveEffort && this.isReasoningUnsupported(err)) {
           console.warn('[narwhal] selectModel: DSH rejected reasoningEffort, retrying without (kept as local preference)')
-          await this.rpc('session.selectModel', { sessionId: this.selectedSessionId, provider, model })
+          await this.rpc('session/selectModel', { request: { sessionId: this.selectedSessionId, provider, model } })
         } else throw err
       }
     }
     // Step 2: Update DSH agent-default-model namespace (global default),
     // gracefully dropping reasoningEffort if DSH rejects it.
     try {
-      const descriptor = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
-      const namespaces = Array.isArray(descriptor.namespaces) ? descriptor.namespaces.filter(isRecord) : []
-      const existingDefaultNs = namespaces.find((ns) => ns.ns === 'agent-default-model')
+      const { namespaces } = await this.settingsDescribe()
+      const existingDefaultNs = namespaces.find((ns) => string(ns.ns, 100) === 'agent-default-model')
       const applyNs = async (nsRev: number) => {
         const val: JsonRecord = { provider, model }
         if (effectiveEffort) val.reasoningEffort = effectiveEffort
         try {
-          await this.rpc('settings.mutate', { ns: 'agent-default-model', ops: [{ op: 'set', path: [], value: val }], expectedRevision: nsRev })
+          await this.rpc('settings/mutate', { ns: 'agent-default-model', ops: [{ op: 'set', path: [], value: val }], expectedRevision: nsRev })
         } catch (mutErr) {
-          if (effectiveEffort && isReasoningUnsupported(mutErr)) {
-            await this.rpc('settings.mutate', { ns: 'agent-default-model', ops: [{ op: 'set', path: [], value: { provider, model } as JsonRecord }], expectedRevision: nsRev })
+          if (effectiveEffort && this.isReasoningUnsupported(mutErr)) {
+            await this.rpc('settings/mutate', { ns: 'agent-default-model', ops: [{ op: 'set', path: [], value: { provider, model } }], expectedRevision: nsRev })
           } else throw mutErr
         }
       }
@@ -911,7 +1043,7 @@ export class HostBridge {
         if (anyNsRev !== undefined) await applyNs(anyNsRev)
       }
     } catch (err) {
-      console.warn('[narwhal] selectModel: settings.mutate failed:', err instanceof Error ? err.message : String(err))
+      console.warn('[narwhal] selectModel: settings/mutate failed:', err instanceof Error ? err.message : String(err))
     }
     // Step 3: Remember the active model (+its effective effort) for startup default.
     try {
@@ -922,7 +1054,12 @@ export class HostBridge {
     // Step 4: configuration() merges DSH session effort + the per-model preference.
     return this.configuration()
   }
-  async setDefaultPermission(preset: string): Promise<AgentConfiguration> { const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable'); const descriptor = await this.rpc<{ namespaces?: unknown }>('settings.describe', {}); const permission = Array.isArray(descriptor.namespaces) ? descriptor.namespaces.find((item) => isRecord(item) && item.ns === 'permission') : undefined; if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable'); await this.rpc('settings.mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration() }
+  async setDefaultPermission(preset: string): Promise<AgentConfiguration> {
+    const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable')
+    const { namespaces } = await this.settingsDescribe()
+    const permission = namespaces.find((item) => string(item.ns, 100) === 'permission'); if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable')
+    await this.rpc('settings/mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration()
+  }
   async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> {
     const key = value.trim()
     if (!/^[\x21-\x7E]+$/u.test(key) || /^(?:[A-Za-z_][A-Za-z0-9_]*)=/u.test(key)) throw new Error('API key format is invalid')
@@ -932,13 +1069,13 @@ export class HostBridge {
     const resolved = await this.resolveProviderNsPath(providerId)
     if (!resolved) throw new Error('Provider settings are unavailable')
     const { ns, path } = resolved
-    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
-    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
-    const profile = isRecord(section) && isRecord(section.value) ? valueAt(section.value, path) : undefined
+    const { namespaces } = await this.settingsDescribe()
+    const section = namespaces.find((item) => string(item.ns, 100) === ns)
+    const profile = section && isRecord(section.value) ? valueAt(section.value, path) : undefined
     if (!isRecord(profile)) throw new Error('Provider configuration is unavailable')
     const reference = credentialRefFor(providerId, profile)
     if (!reference) throw new Error('Provider credential is unavailable')
-    await this.rpc('credentials.set', { ref: reference, value: key })
+    await this.rpc('credentials/set', { ref: reference, value: key })
     return this.configuration()
   }
   async setProviderBaseUrl(providerId: string, value: string): Promise<AgentConfiguration> {
@@ -948,10 +1085,10 @@ export class HostBridge {
     const resolved = await this.resolveProviderNsPath(providerId)
     if (!resolved) throw new Error('Provider settings are unavailable')
     const { ns, path } = resolved
-    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
-    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
-    if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
-    await this.rpc('settings.mutate', { ns, ops: [{ op: 'set', path: [...path, 'baseURL'], value: baseUrl }], expectedRevision: section.revision })
+    const { namespaces } = await this.settingsDescribe()
+    const section = namespaces.find((item) => string(item.ns, 100) === ns)
+    if (!section || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
+    await this.rpc('settings/mutate', { ns, ops: [{ op: 'set', path: [...path, 'baseURL'], value: baseUrl }], expectedRevision: section.revision })
     // Persist to config.json
     try {
       const cfg = getConfig()
@@ -984,9 +1121,9 @@ export class HostBridge {
     const resolved = await this.resolveProviderNsPath(providerId)
     if (!resolved) throw new Error('Provider settings are unavailable')
     const { ns, path } = resolved
-    const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
-    const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === ns) : undefined
-    if (!isRecord(section) || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
+    const { namespaces } = await this.settingsDescribe()
+    const section = namespaces.find((item) => string(item.ns, 100) === ns)
+    if (!section || typeof section.revision !== 'number') throw new Error('Provider settings are unavailable')
     // Protocol comes from the existing stored profile (the edit form doesn't
     // resend it). Custom providers are openai-completions unless configured
     // otherwise — reasoning levels are only declared for the openai family.
@@ -996,7 +1133,7 @@ export class HostBridge {
     const ops: { op: 'set'; path: string[]; value: unknown }[] = []
     if (baseUrl !== undefined) ops.push({ op: 'set', path: [...path, 'baseURL'], value: baseUrl })
     if (dshModels !== undefined) ops.push({ op: 'set', path: [...path, 'models'], value: dshModels })
-    await this.rpc('settings.mutate', { ns, ops, expectedRevision: section.revision })
+    await this.rpc('settings/mutate', { ns, ops, expectedRevision: section.revision })
     // Persist to config.json
     try {
       const cfg = getConfig()
@@ -1027,13 +1164,13 @@ export class HostBridge {
     if (resolved) {
       let credentialRef: string | undefined
       try {
-        const settings = await this.rpc<{ namespaces?: unknown }>('settings.describe', {})
-        const section = Array.isArray(settings.namespaces) ? settings.namespaces.find((item) => isRecord(item) && item.ns === resolved.ns) : undefined
-        if (isRecord(section)) {
+        const { namespaces } = await this.settingsDescribe()
+        const section = namespaces.find((item) => string(item.ns, 100) === resolved.ns)
+        if (section) {
           const profile = isRecord(section.value) ? valueAt(section.value, resolved.path) : undefined
           if (isRecord(profile)) credentialRef = credentialRefFor(providerId, profile)
           if (typeof section.revision === 'number') {
-            await this.rpc('settings.mutate', { ns: resolved.ns, ops: [{ op: 'unset', path: resolved.path }], expectedRevision: section.revision })
+            await this.rpc('settings/mutate', { ns: resolved.ns, ops: [{ op: 'unset', path: resolved.path }], expectedRevision: section.revision })
           }
         }
       } catch (err) {
@@ -1044,11 +1181,10 @@ export class HostBridge {
       if (credentialRef) {
         try {
           // Verify it's actually configured before unsetting — avoids unnecessary calls.
-          const desc = await this.rpc<{ credentials?: unknown }>('credentials.describe', { refs: [credentialRef] })
-          const map = isRecord(desc.credentials) ? desc.credentials as Record<string, unknown> : {}
-          const entry = map[credentialRef]
+          const desc = await this.rpc<Record<string, { configured?: boolean }>>('credentials/describe', { refs: [credentialRef] })
+          const entry = desc[credentialRef]
           if (isRecord(entry) && entry.configured === true) {
-            await this.rpc('credentials.unset', { ref: credentialRef })
+            await this.rpc('credentials/unset', { ref: credentialRef })
             console.log(`[narwhal] deleteProvider: cleared credential ref=${credentialRef}`)
           }
         } catch (err) {
@@ -1065,31 +1201,25 @@ export class HostBridge {
     return this.configuration()
   }
 
-  /** Resolve the { ns, path } for a provider. First tries llm.providers RPC
-   *  (works for built-in providers). If DSH doesn't expose the target there
-   *  (common for custom providers created via settings.yaml), borrows ns +
-   *  path template from an existing built-in provider and replaces its id
-   *  segment with the target id. Returns null when neither yields usable coords. */
+  /** Resolve the { ns, path } for a provider in 0.1.5's configurable-provider
+   *  catalog. A direct match works for both declared and catalog routes; if
+   *  the Host has never heard of the id, borrow the llm-pi-ai path shape
+   *  (`providers/<id>`) from any pi-ai catalog row. Returns null when no
+   *  pi-ai namespace is visible at all. */
   private async resolveProviderNsPath(providerId: string): Promise<{ ns: string; path: string[] } | null> {
     try {
-      const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
-      const arr = Array.isArray(registered.providers) ? registered.providers.filter(isRecord) : []
-      // Direct match
-      const direct = arr.find((item) => item.provider === providerId)
+      const rows = await this.configurableProviders()
+      const direct = rows.find((row) => row.provider === providerId)
       if (direct) {
         const ns = string(direct.settingsNs, 120)
-        const pathArr = Array.isArray(direct.settingsPath)
-          ? direct.settingsPath.every((p) => typeof p === 'string') ? direct.settingsPath as string[] : undefined
-          : undefined
+        const pathArr = Array.isArray(direct.settingsPath) && direct.settingsPath.every((p) => typeof p === 'string') ? direct.settingsPath as string[] : undefined
         if (ns && pathArr) return { ns, path: pathArr }
       }
-      // Fallback: borrow from a built-in provider
-      const builtIn = arr.find((item) => string(item.settingsNs, 120) && Array.isArray(item.settingsPath) && item.settingsPath.every((p) => typeof p === 'string'))
-      if (!builtIn) return null
-      const bNs = string(builtIn.settingsNs, 120)!
-      const bPath = builtIn.settingsPath as string[]
-      const fallbackPath = [...bPath.slice(0, -1), providerId]
-      return { ns: bNs, path: fallbackPath }
+      const piAi = rows.find((row) => string(row.settingsNs, 120) === PIAI_SETTINGS_NS
+        && Array.isArray(row.settingsPath) && (row.settingsPath as unknown[]).length >= 2
+        && (row.settingsPath as unknown[])[0] === PIAI_PROVIDERS_PATH[0])
+      if (!piAi) return null
+      return { ns: PIAI_SETTINGS_NS, path: [PIAI_PROVIDERS_PATH[0], providerId] }
     } catch { return null }
   }
 
@@ -1102,7 +1232,7 @@ export class HostBridge {
     if (displayName !== undefined && !displayName) errors.push('Display name cannot be empty when provided')
     // Step 3: Validate model IDs (at least one)
     if (!modelIds.length) errors.push('At least one model ID is required')
-    modelIds.forEach((modelId, index) => {
+    modelIds.forEach((modelId) => {
       if (!validModelId(modelId)) errors.push(`Model ID "${modelId}" is invalid. Use letters, digits, dots, and underscores`)
     })
     // Step 4: Validate base URL
@@ -1114,47 +1244,38 @@ export class HostBridge {
     // Aggregate pre-validation errors
     if (errors.length) throw new Error(errors.join(' '))
     // Step 6: Check Host capability
-    const settings = await this.rpc<{ writable?: unknown; namespaces?: unknown }>('settings.describe', {})
-    const namespaces = Array.isArray(settings.namespaces) ? settings.namespaces.filter(isRecord) : []
-    const descriptor = settings.writable === true ? customProviderDescriptor(namespaces) : undefined
-    if (settings.writable !== true) throw new Error('The local Host settings are read-only and cannot accept new providers')
-    // Fallback when DSH runtime doesn't expose a writable schema — Narwhal
-    // implements its own write path, so "openai-completions" is always valid.
-    const supportedProtocols = descriptor?.protocols ?? ['openai-completions']
+    const { writable, namespaces } = await this.settingsDescribe()
+    if (!writable) throw new Error('The local Host settings are read-only and cannot accept new providers')
+    const descriptor = customProviderDescriptor(namespaces)
+    // The 0.1.5 pi-ai adapter ships a fixed protocol set; accept any of those
+    // whether or not the serialized settings schema was walkable.
+    const supportedProtocols = descriptor?.protocols ?? [...PIAI_PROTOCOLS]
     if (!supportedProtocols.includes(protocol)) throw new Error(`API protocol "${protocol}" is not supported by this local Host. Supported: ${supportedProtocols.join(', ')}`)
-    // Step 7: Resolve target namespace + path (with fallback when schema missing)
+    // Step 7: Resolve target namespace + path. pi-ai providers always live at
+    // llm-pi-ai/providers/<id>; prefer a walked descriptor, fall back to the
+    // known constant.
     let targetNs: string, targetPath: string[], targetRevision: number
-    if (descriptor) {
+    if (descriptor?.ns === PIAI_SETTINGS_NS) {
       targetNs = descriptor.ns
-      targetPath = [descriptor.providersPath, id]  // descriptor.providersPath is a single string segment
+      targetPath = [descriptor.providersPath, id]
       targetRevision = descriptor.revision
     } else {
-      // Fallback: DSH runtime didn't expose a writable custom-provider schema.
-      // Borrow the namespace + providers path pattern from an existing built-in
-      // provider (e.g. deepseek) — DSH always has at least one registered.
-      const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
-      const builtIn = Array.isArray(registered.providers)
-        ? registered.providers.find((item) => isRecord(item) && string(item.settingsNs, 120) && Array.isArray(item.settingsPath))
-        : undefined
-      if (!builtIn) throw new Error('Cannot resolve target namespace for custom providers — no built-in provider found')
-      targetNs = string(builtIn.settingsNs, 120)!
-      targetPath = [...(builtIn.settingsPath as string[]), id]
-      const section = namespaces.find((item) => item.ns === targetNs)
+      targetNs = PIAI_SETTINGS_NS
+      targetPath = [PIAI_PROVIDERS_PATH[0], id]
+      const section = namespaces.find((item) => string(item.ns, 100) === targetNs)
       if (!section || typeof section.revision !== 'number') throw new Error('Provider settings namespace is unavailable')
       targetRevision = section.revision
     }
-    // Step 7b: Check for duplicate ID
-    const registered = await this.rpc<{ providers?: unknown }>('llm.providers', {})
-    const duplicate = Array.isArray(registered.providers) && registered.providers.some((item) => isRecord(item) && item.provider === id)
+    // Step 7b: Check for duplicate ID (declared providers only)
+    const configurable = await this.configurableProviders()
+    const duplicate = configurable.some((row) => row.provider === id && row.declared === true)
     if (duplicate) throw new Error(`A provider with ID "${id}" already exists. Choose a different ID.`)
     // Step 8: Build the provider profile.
     // IMPORTANT: apiKeyEnv MUST be a valid non-empty credential ref — DSH
     // runtime's settings schema rejects "" (empty) and anything not matching
     // /^[A-Za-z_][A-Za-z0-9_]*$/. We always derive one from the provider id
-    // (e.g. "LLM_PI_AI_MY_GATEWAY") even when the user hasn't stored an API
-    // key yet. This lets DSH's pi-ai plugin register an adapter for this
-    // route so session.selectModel and session.prompt work; the actual
-    // request will fail auth naturally when no credential is configured.
+    // so pi-ai registers an adapter for this route immediately; the actual
+    // request fails auth naturally when no credential is configured.
     // DSH pi-ai needs reasoning levels as a dict to actually send
     // reasoning_effort upstream; config.json keeps Narwhal's enum-array shape.
     const dshModels = modelsForDsh(modelIds, protocol)
@@ -1164,11 +1285,9 @@ export class HostBridge {
     const credentialRef = credentialRefFor(id, profile)
     if (!credentialRef) throw new Error('Provider credential reference could not be generated. Try a different provider ID.')
     profile.apiKeyEnv = credentialRef
-    // Step 9: Write to DSH runtime settings namespace. This is the critical
-    // write — DSH's pi-ai plugin watches its own namespace and re-registers
-    // adapters on change. Without this, session.selectModel throws
-    // "no adapter registered for provider X".
-    await this.rpc('settings.mutate', { ns: targetNs, ops: [{ op: 'set', path: targetPath, value: profile }], expectedRevision: targetRevision })
+    // Step 9: Write to DSH runtime settings namespace. The pi-ai plugin
+    // watches its namespace and re-registers adapters on change.
+    await this.rpc('settings/mutate', { ns: targetNs, ops: [{ op: 'set', path: targetPath, value: profile }], expectedRevision: targetRevision })
     // Step 10: Persist to config.json (authoritative store for Narwhal)
     try {
       const cfg = getConfig()
@@ -1183,7 +1302,7 @@ export class HostBridge {
       return { configuration: cfg, keyStored: true }
     }
     let keyStored = true
-    try { await this.rpc('credentials.set', { ref: credentialRef, value: apiKey }) } catch { keyStored = false }
+    try { await this.rpc('credentials/set', { ref: credentialRef, value: apiKey }) } catch { keyStored = false }
     const cfg = await this.configuration()
     return { configuration: cfg, keyStored }
   }
