@@ -197,6 +197,9 @@ jobs:
       - name: Open or close the dsh-track-bot issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # This job intentionally has no checkout step, so gh cannot infer the
+          # repository from a git remote — point it at the repo explicitly.
+          GH_REPO: ${{ github.repository }}
           RESULT: ${{ needs.check-and-bump.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
