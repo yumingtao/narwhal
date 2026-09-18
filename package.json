@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "dshRuntime": "npm@0.1.5-rc.1",
+  "dshRuntime": "npm@0.1.5-rc.2",
   "author": "yumingtao <10069214+yumingtao@users.noreply.github.com>",
   "description": "A local-first, privacy-first AI agent. Your conversations, projects, and work context stay on your machine.",
   "type": "module",
