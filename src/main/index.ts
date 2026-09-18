@@ -210,7 +210,7 @@ async function chooseWorkspace(): Promise<WorkbenchSnapshot> {
   if (!workspace) { workspace = { id: randomUUID(), path, name: basename(path), lastOpenedAt: now, conversations: [], deliverables: [], panelOpen: false }; store.workspaces.unshift(workspace) }
   workspace.lastOpenedAt = now; store.selectedWorkspaceId = workspace.id; store.workspaces = store.workspaces.slice(0, 12); await persist()
   syncSurvivingCwds()
-  if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }
+  if (agent.state === 'ready') await applyWorkspaceSelection(workspace)
   return snapshot()
 }
 function pathWithin(workspace: StoredWorkspace, candidate: string): string {
@@ -249,6 +249,23 @@ async function showRecovery(reason?: Error): Promise<void> {
   agent = { state: 'needs-restart' }; emitAgent(); if (!windowRef) windowRef = makeWindow(); await windowRef.loadURL(recoveryUrl)
   if (reason) { await mkdir(app.getPath('logs'), { recursive: true, mode: 0o700 }); await appendFile(join(app.getPath('logs'), 'startup.log'), `${new Date().toISOString()} ${reason.message}\n`, { encoding: 'utf8', mode: 0o600 }) }
 }
+/**
+ * Restore a workspace's selected session after the host is ready. If the
+ * stored session no longer exists (e.g. its files were removed outside the
+ * app), drop the stale reference instead of failing host startup — one
+ * dangling id would otherwise leave the whole Agent on the recovery screen.
+ */
+async function applyWorkspaceSelection(workspace: StoredWorkspace): Promise<void> {
+  await hostBridge.listSessions()
+  if (!workspace.selectedSessionId) { hostBridge.clearSelection(); return }
+  try {
+    await hostBridge.selectSession(workspace.selectedSessionId, workspace.path)
+  } catch (error) {
+    if (!(error instanceof Error && error.message.includes('not available'))) throw error
+    workspace.selectedSessionId = undefined; await persist()
+    hostBridge.clearSelection()
+  }
+}
 async function startHost(): Promise<void> {
   agent = { state: 'starting' }; emitAgent()
   const generation = await getSupervisor().start()
@@ -256,7 +273,7 @@ async function startHost(): Promise<void> {
   syncSurvivingCwds()
   agent = { state: 'ready', origin: generation.origin }; emitAgent()
   const workspace = selected()
-  if (workspace) { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }
+  if (workspace) await applyWorkspaceSelection(workspace)
 }
 
 function registerIpc(): void {
@@ -272,7 +289,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('narwhal:get-config-path', async (event) => { sender(event); return getConfigPath() })
   ipcMain.handle('narwhal:choose-workspace', async (event) => { sender(event); return chooseWorkspace() })
-  ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })
+  ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') void applyWorkspaceSelection(workspace); return snapshot() })
   ipcMain.handle('narwhal:rename-workspace', async (event, raw) => { sender(event); const value = asRecord(raw); const id = asString(value.workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); const name = asString(value.name, 'workspace name', 120); if (!name) throw new Error('Workspace name is required'); workspace.name = name; await persist(); return snapshot() })
   ipcMain.handle('narwhal:delete-workspace', async (event, raw) => {
     sender(event)
