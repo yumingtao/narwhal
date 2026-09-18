@@ -19,6 +19,18 @@ const PIAI_PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-mes
 const MUX_PATH = '/api/remote.mux'
 const EVENT_STREAM_ENDPOINT = '$events'
 const EVENT_RESULT_ENDPOINT = '$events/result'
+/** Raster formats 0.1.5 admits as inline base64 prompt image parts. */
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+type ImageContentPart = { type: 'image'; mediaType: string; data: string; name?: string }
+
+/** Convert an attachment's data URL into a 0.1.5 inline image part. */
+function imagePartFromDataUrl(attachment: Attachment): ImageContentPart | undefined {
+  const match = /^data:([^;,]+)(;base64)?,([\s\S]*)$/u.exec(attachment.dataUrl ?? '')
+  if (!match || match[2] !== ';base64') return undefined
+  const mediaType = match[1].toLowerCase()
+  if (!IMAGE_MEDIA_TYPES.has(mediaType)) return undefined
+  return { type: 'image', mediaType, data: match[3], ...(attachment.name ? { name: attachment.name } : {}) }
+}
 
 function isRecord(value: unknown): value is JsonRecord { return !!value && typeof value === 'object' && !Array.isArray(value) }
 function string(value: unknown, limit = MAX_TEXT): string | undefined { return typeof value === 'string' ? value.slice(0, limit) : undefined }
@@ -647,16 +659,29 @@ export class HostBridge {
   async prompt(text: string, attachments?: readonly Attachment[]): Promise<AgentConversation> {
     const sessionId = this.selectedSessionId; if (!sessionId) throw new Error('Choose a conversation first')
     const hasAttachments = !!(attachments && attachments.length)
-    const attachmentNote = hasAttachments
-      ? `\n\n[Attached files: ${attachments!.map(a => `${a.name} (${a.type}, ${a.size} bytes)`).join('; ')}]`
-      : ''
-    const promptText = (text || 'Please analyze the attached file(s).') + attachmentNote
-    const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: promptText }]
+    // 0.1.5 accepts inline base64 image parts in session/prompt and admits
+    // them into durable attachments server-side, so supported raster images
+    // travel as real model input. Other file types have no inline wire form
+    // and remain described in a metadata note.
+    const imageParts: ImageContentPart[] = []
+    const notedFiles: string[] = []
+    for (const attachment of attachments ?? []) {
+      const imagePart = imagePartFromDataUrl(attachment)
+      if (imagePart) imageParts.push(imagePart)
+      else notedFiles.push(`${attachment.name} (${attachment.type}, ${attachment.size} bytes)`)
+    }
+    const attachmentNote = notedFiles.length > 0 ? `\n\n[Attached files: ${notedFiles.join('; ')}]` : ''
+    const fallbackText = imageParts.length > 0 ? 'Please analyze the attached image(s).' : 'Please analyze the attached file(s).'
+    const promptText = (text || fallbackText) + attachmentNote
+    const content: Array<{ type: 'text'; text: string } | ImageContentPart> = [{ type: 'text', text: promptText }, ...imageParts]
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     // 0.1.5 requires a client-minted requestId on every queued prompt.
     await this.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId, mode: 'queue', content, clientTimeZone: timeZone } })
     const displayText = text || (hasAttachments ? `Analyzing ${attachments!.length} attachment${attachments!.length !== 1 ? 's' : ''}` : '')
-    const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text: displayText, time: Date.now(), attachments: attachments ? [...attachments] : undefined }
+    // Echo metadata only — image bytes must not accumulate in the in-memory
+    // message buffer or round-trip back through conversation events.
+    const echoAttachments = attachments?.map(({ id, name, size, type }) => ({ id, name, size, type }))
+    const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text: displayText, time: Date.now(), attachments: echoAttachments }
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
     this.running = true; this.emit()
     this.startPromptWatch(sessionId)
