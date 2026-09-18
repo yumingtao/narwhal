@@ -744,19 +744,27 @@ export class HostBridge {
     const sessionId = this.selectedSessionId
     try {
       if (name === 'goal' && (match[2] ?? '').trim() === '') return this.execGoalView(sessionId)
-      // Every built-in command is dispatched natively in 0.1.5 (compact,
-      // export, feedback, goal, permission, plan). compaction can run long,
-      // so give the RPC a generous timeout.
-      const native = new Set(['compact', 'export', 'feedback', 'goal', 'permission', 'plan'])
+      // /permission is applied through the settings namespace rather than the
+      // built-in slash command: 0.1.5's command accepts only workspace-write
+      // and danger-full-access, while the permission settings (and the UI
+      // picker) also expose read-only. Routing through settings/mutate keeps
+      // the slash command, the settings dialog, and persistence consistent.
+      if (name === 'permission') return await this.execPermission(match[2] ?? '')
+      // Every other built-in command is dispatched natively in 0.1.5
+      // (compact, export, feedback, goal, plan). compaction can run long, so
+      // give the RPC a generous timeout.
+      const native = new Set(['compact', 'export', 'feedback', 'goal', 'plan'])
       if (native.has(name)) {
-        const normalized = name === 'permission' ? this.normalizePermissionLine(line) : line
-        const out = await this.rpc<{ result?: { kind?: string; text?: string } } | undefined>('commands/execute', { agentId: sessionId, line: normalized, submittedAttachments: [] }, 120_000)
+        const out = await this.rpc<{ result?: { kind?: string; text?: string } } | undefined>('commands/execute', { agentId: sessionId, line, submittedAttachments: [] }, 120_000)
         if (out === undefined) return { kind: 'error', text: `Unknown command: /${name}` }
         const result = out.result ?? {}
         return { kind: result.kind === 'error' ? 'error' : 'success', ...(typeof result.text === 'string' ? { text: result.text } : {}) }
       }
-      // Unknown command — could be a skill. Queue it as a prompt so the model
-      // sees it. Graceful degradation for skill-loaded sessions.
+      // Unknown to the built-in dispatcher: queue it as a prompt only when it
+      // matches a registered command/skill, so typos (e.g. "/permisson") do
+      // not silently reach the model.
+      const registered = new Set((await this.listCommands()).map((command) => command.name))
+      if (!registered.has(name)) return { kind: 'error', text: `Unknown command: /${name}` }
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
       await this.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId, mode: 'queue', content: [{ type: 'text', text: line }], clientTimeZone: timeZone } })
       this.running = true; this.emit()
@@ -767,10 +775,24 @@ export class HostBridge {
       return { kind: 'error', text: e instanceof Error ? e.message : String(e) }
     }
   }
-  private normalizePermissionLine(line: string): string {
-    // 0.1.5 preset ids: read-only | workspace-write | danger-full-access.
+  /**
+   * Apply `/permission <preset>` via the permission settings namespace
+   * (the same channel as the settings dialog). Accepts the CLI-style
+   * aliases `safe` and `full-access`.
+   */
+  private async execPermission(rawArgs: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    const requested = rawArgs.trim()
+    const config = await this.configuration()
+    const available = config.permissionOptions.map((item) => item.id)
+    if (requested === '') {
+      const current = config.defaultPermission !== undefined && available.includes(config.defaultPermission) ? config.defaultPermission : 'unknown'
+      return { kind: 'success', text: `current preset ${current} (available: ${available.join(', ')})` }
+    }
     const aliases: Record<string, string> = { safe: 'workspace-write', 'full-access': 'danger-full-access' }
-    return line.replace(/^(\/permission\s+)(\S+)\s*$/u, (whole, head: string, preset: string) => `${head}${aliases[preset] ?? preset}`)
+    const preset = aliases[requested] ?? requested
+    if (!available.includes(preset)) return { kind: 'error', text: `unknown preset "${requested}" (available: ${available.join(', ')})` }
+    await this.setDefaultPermission(preset)
+    return { kind: 'success', text: `preset ${preset}` }
   }
   /** /goal with no args — read the live goal projection from session/list. */
   private async execGoalView(sessionId: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
@@ -1058,7 +1080,14 @@ export class HostBridge {
     const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable')
     const { namespaces } = await this.settingsDescribe()
     const permission = namespaces.find((item) => string(item.ns, 100) === 'permission'); if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable')
-    await this.rpc('settings/mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration()
+    await this.rpc('settings/mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision })
+    // Mirror into config.json: startup regenerates settings.yaml from it
+    // (syncDshConfig), otherwise the preset would snap back after restart.
+    try {
+      const cfg = getConfig()
+      await saveConfig({ agent: { ...cfg.agent, permissionLevel: option.id as typeof cfg.agent.permissionLevel } })
+    } catch (err) { console.warn('[narwhal] setDefaultPermission: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
+    return this.configuration()
   }
   async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> {
     const key = value.trim()

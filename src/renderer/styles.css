@@ -481,6 +481,19 @@ button { cursor: pointer; }
   background: var(--bg-muted);
   border-bottom: 1px solid var(--border-input);
 }
+.command-note {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 12px;
+  margin: 0;
+  border-radius: 8px;
+  background: var(--bg-muted);
+  border: 1px solid var(--border-input);
+  color: var(--text-secondary);
+}
+.command-note > .icon { color: var(--success); flex-shrink: 0; margin-top: 1px; }
+.command-note.error { border-color: color-mix(in srgb, var(--error) 40%, transparent); }
+.command-note.error > .icon { color: var(--error); }
+.command-note small { font-size: 12px; line-height: 1.5; word-break: break-word; }
 .missing-key-inline > .icon {
   color: var(--warning); flex-shrink: 0;
   margin-top: 1px;
