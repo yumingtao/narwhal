@@ -19,6 +19,18 @@ const PIAI_PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-mes
 const MUX_PATH = '/api/remote.mux'
 const EVENT_STREAM_ENDPOINT = '$events'
 const EVENT_RESULT_ENDPOINT = '$events/result'
+/** Raster formats 0.1.5 admits as inline base64 prompt image parts. */
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+type ImageContentPart = { type: 'image'; mediaType: string; data: string; name?: string }
+
+/** Convert an attachment's data URL into a 0.1.5 inline image part. */
+function imagePartFromDataUrl(attachment: Attachment): ImageContentPart | undefined {
+  const match = /^data:([^;,]+)(;base64)?,([\s\S]*)$/u.exec(attachment.dataUrl ?? '')
+  if (!match || match[2] !== ';base64') return undefined
+  const mediaType = match[1].toLowerCase()
+  if (!IMAGE_MEDIA_TYPES.has(mediaType)) return undefined
+  return { type: 'image', mediaType, data: match[3], ...(attachment.name ? { name: attachment.name } : {}) }
+}
 
 function isRecord(value: unknown): value is JsonRecord { return !!value && typeof value === 'object' && !Array.isArray(value) }
 function string(value: unknown, limit = MAX_TEXT): string | undefined { return typeof value === 'string' ? value.slice(0, limit) : undefined }
@@ -647,16 +659,29 @@ export class HostBridge {
   async prompt(text: string, attachments?: readonly Attachment[]): Promise<AgentConversation> {
     const sessionId = this.selectedSessionId; if (!sessionId) throw new Error('Choose a conversation first')
     const hasAttachments = !!(attachments && attachments.length)
-    const attachmentNote = hasAttachments
-      ? `\n\n[Attached files: ${attachments!.map(a => `${a.name} (${a.type}, ${a.size} bytes)`).join('; ')}]`
-      : ''
-    const promptText = (text || 'Please analyze the attached file(s).') + attachmentNote
-    const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: promptText }]
+    // 0.1.5 accepts inline base64 image parts in session/prompt and admits
+    // them into durable attachments server-side, so supported raster images
+    // travel as real model input. Other file types have no inline wire form
+    // and remain described in a metadata note.
+    const imageParts: ImageContentPart[] = []
+    const notedFiles: string[] = []
+    for (const attachment of attachments ?? []) {
+      const imagePart = imagePartFromDataUrl(attachment)
+      if (imagePart) imageParts.push(imagePart)
+      else notedFiles.push(`${attachment.name} (${attachment.type}, ${attachment.size} bytes)`)
+    }
+    const attachmentNote = notedFiles.length > 0 ? `\n\n[Attached files: ${notedFiles.join('; ')}]` : ''
+    const fallbackText = imageParts.length > 0 ? 'Please analyze the attached image(s).' : 'Please analyze the attached file(s).'
+    const promptText = (text || fallbackText) + attachmentNote
+    const content: Array<{ type: 'text'; text: string } | ImageContentPart> = [{ type: 'text', text: promptText }, ...imageParts]
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     // 0.1.5 requires a client-minted requestId on every queued prompt.
     await this.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId, mode: 'queue', content, clientTimeZone: timeZone } })
     const displayText = text || (hasAttachments ? `Analyzing ${attachments!.length} attachment${attachments!.length !== 1 ? 's' : ''}` : '')
-    const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text: displayText, time: Date.now(), attachments: attachments ? [...attachments] : undefined }
+    // Echo metadata only — image bytes must not accumulate in the in-memory
+    // message buffer or round-trip back through conversation events.
+    const echoAttachments = attachments?.map(({ id, name, size, type }) => ({ id, name, size, type }))
+    const accepted: ChatItem = { id: `accepted-${randomUUID()}`, kind: 'user', text: displayText, time: Date.now(), attachments: echoAttachments }
     this.messages = [...this.messages, accepted].slice(-MAX_ITEMS)
     this.running = true; this.emit()
     this.startPromptWatch(sessionId)
@@ -744,19 +769,27 @@ export class HostBridge {
     const sessionId = this.selectedSessionId
     try {
       if (name === 'goal' && (match[2] ?? '').trim() === '') return this.execGoalView(sessionId)
-      // Every built-in command is dispatched natively in 0.1.5 (compact,
-      // export, feedback, goal, permission, plan). compaction can run long,
-      // so give the RPC a generous timeout.
-      const native = new Set(['compact', 'export', 'feedback', 'goal', 'permission', 'plan'])
+      // /permission is applied through the settings namespace rather than the
+      // built-in slash command: 0.1.5's command accepts only workspace-write
+      // and danger-full-access, while the permission settings (and the UI
+      // picker) also expose read-only. Routing through settings/mutate keeps
+      // the slash command, the settings dialog, and persistence consistent.
+      if (name === 'permission') return await this.execPermission(match[2] ?? '')
+      // Every other built-in command is dispatched natively in 0.1.5
+      // (compact, export, feedback, goal, plan). compaction can run long, so
+      // give the RPC a generous timeout.
+      const native = new Set(['compact', 'export', 'feedback', 'goal', 'plan'])
       if (native.has(name)) {
-        const normalized = name === 'permission' ? this.normalizePermissionLine(line) : line
-        const out = await this.rpc<{ result?: { kind?: string; text?: string } } | undefined>('commands/execute', { agentId: sessionId, line: normalized, submittedAttachments: [] }, 120_000)
+        const out = await this.rpc<{ result?: { kind?: string; text?: string } } | undefined>('commands/execute', { agentId: sessionId, line, submittedAttachments: [] }, 120_000)
         if (out === undefined) return { kind: 'error', text: `Unknown command: /${name}` }
         const result = out.result ?? {}
         return { kind: result.kind === 'error' ? 'error' : 'success', ...(typeof result.text === 'string' ? { text: result.text } : {}) }
       }
-      // Unknown command — could be a skill. Queue it as a prompt so the model
-      // sees it. Graceful degradation for skill-loaded sessions.
+      // Unknown to the built-in dispatcher: queue it as a prompt only when it
+      // matches a registered command/skill, so typos (e.g. "/permisson") do
+      // not silently reach the model.
+      const registered = new Set((await this.listCommands()).map((command) => command.name))
+      if (!registered.has(name)) return { kind: 'error', text: `Unknown command: /${name}` }
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
       await this.rpc('session/prompt', { request: { requestId: randomUUID(), sessionId, mode: 'queue', content: [{ type: 'text', text: line }], clientTimeZone: timeZone } })
       this.running = true; this.emit()
@@ -767,10 +800,24 @@ export class HostBridge {
       return { kind: 'error', text: e instanceof Error ? e.message : String(e) }
     }
   }
-  private normalizePermissionLine(line: string): string {
-    // 0.1.5 preset ids: read-only | workspace-write | danger-full-access.
+  /**
+   * Apply `/permission <preset>` via the permission settings namespace
+   * (the same channel as the settings dialog). Accepts the CLI-style
+   * aliases `safe` and `full-access`.
+   */
+  private async execPermission(rawArgs: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
+    const requested = rawArgs.trim()
+    const config = await this.configuration()
+    const available = config.permissionOptions.map((item) => item.id)
+    if (requested === '') {
+      const current = config.defaultPermission !== undefined && available.includes(config.defaultPermission) ? config.defaultPermission : 'unknown'
+      return { kind: 'success', text: `current preset ${current} (available: ${available.join(', ')})` }
+    }
     const aliases: Record<string, string> = { safe: 'workspace-write', 'full-access': 'danger-full-access' }
-    return line.replace(/^(\/permission\s+)(\S+)\s*$/u, (whole, head: string, preset: string) => `${head}${aliases[preset] ?? preset}`)
+    const preset = aliases[requested] ?? requested
+    if (!available.includes(preset)) return { kind: 'error', text: `unknown preset "${requested}" (available: ${available.join(', ')})` }
+    await this.setDefaultPermission(preset)
+    return { kind: 'success', text: `preset ${preset}` }
   }
   /** /goal with no args — read the live goal projection from session/list. */
   private async execGoalView(sessionId: string): Promise<{ kind: 'success' | 'error'; text?: string }> {
@@ -1058,7 +1105,14 @@ export class HostBridge {
     const config = await this.configuration(); const option = config.permissionOptions.find((item) => item.id === preset); if (!option) throw new Error('Permission preset is unavailable')
     const { namespaces } = await this.settingsDescribe()
     const permission = namespaces.find((item) => string(item.ns, 100) === 'permission'); if (!isRecord(permission) || typeof permission.revision !== 'number') throw new Error('Permission settings are unavailable')
-    await this.rpc('settings/mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision }); return this.configuration()
+    await this.rpc('settings/mutate', { ns: 'permission', ops: [{ op: 'set', path: ['defaultPreset'], value: option.id }], expectedRevision: permission.revision })
+    // Mirror into config.json: startup regenerates settings.yaml from it
+    // (syncDshConfig), otherwise the preset would snap back after restart.
+    try {
+      const cfg = getConfig()
+      await saveConfig({ agent: { ...cfg.agent, permissionLevel: option.id as typeof cfg.agent.permissionLevel } })
+    } catch (err) { console.warn('[narwhal] setDefaultPermission: saveConfig failed:', err instanceof Error ? err.message : String(err)) }
+    return this.configuration()
   }
   async setProviderApiKey(providerId: string, value: string): Promise<AgentConfiguration> {
     const key = value.trim()

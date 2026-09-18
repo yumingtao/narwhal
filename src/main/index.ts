@@ -29,6 +29,8 @@ let selectedRuntime: DshRuntime | undefined
 let activeSupervisor: ReturnType<typeof createHostSupervisor> | undefined
 let agent: AgentSnapshot = { state: 'starting' }
 const hostBridge = new HostBridge()
+/** Raster types whose data URLs may cross the prompt IPC as image input. */
+const PROMPT_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 
 interface StoredWorkspace { id: string; path: string; name: string; lastOpenedAt: string; conversations: Conversation[]; selectedConversationId?: string; selectedSessionId?: string; deliverables: Deliverable[]; panelOpen: boolean }
 interface Store { version: 1; selectedWorkspaceId?: string; panelOpen?: boolean; workspaces: StoredWorkspace[] }
@@ -210,7 +212,7 @@ async function chooseWorkspace(): Promise<WorkbenchSnapshot> {
   if (!workspace) { workspace = { id: randomUUID(), path, name: basename(path), lastOpenedAt: now, conversations: [], deliverables: [], panelOpen: false }; store.workspaces.unshift(workspace) }
   workspace.lastOpenedAt = now; store.selectedWorkspaceId = workspace.id; store.workspaces = store.workspaces.slice(0, 12); await persist()
   syncSurvivingCwds()
-  if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }
+  if (agent.state === 'ready') await applyWorkspaceSelection(workspace)
   return snapshot()
 }
 function pathWithin(workspace: StoredWorkspace, candidate: string): string {
@@ -249,6 +251,23 @@ async function showRecovery(reason?: Error): Promise<void> {
   agent = { state: 'needs-restart' }; emitAgent(); if (!windowRef) windowRef = makeWindow(); await windowRef.loadURL(recoveryUrl)
   if (reason) { await mkdir(app.getPath('logs'), { recursive: true, mode: 0o700 }); await appendFile(join(app.getPath('logs'), 'startup.log'), `${new Date().toISOString()} ${reason.message}\n`, { encoding: 'utf8', mode: 0o600 }) }
 }
+/**
+ * Restore a workspace's selected session after the host is ready. If the
+ * stored session no longer exists (e.g. its files were removed outside the
+ * app), drop the stale reference instead of failing host startup — one
+ * dangling id would otherwise leave the whole Agent on the recovery screen.
+ */
+async function applyWorkspaceSelection(workspace: StoredWorkspace): Promise<void> {
+  await hostBridge.listSessions()
+  if (!workspace.selectedSessionId) { hostBridge.clearSelection(); return }
+  try {
+    await hostBridge.selectSession(workspace.selectedSessionId, workspace.path)
+  } catch (error) {
+    if (!(error instanceof Error && error.message.includes('not available'))) throw error
+    workspace.selectedSessionId = undefined; await persist()
+    hostBridge.clearSelection()
+  }
+}
 async function startHost(): Promise<void> {
   agent = { state: 'starting' }; emitAgent()
   const generation = await getSupervisor().start()
@@ -256,7 +275,7 @@ async function startHost(): Promise<void> {
   syncSurvivingCwds()
   agent = { state: 'ready', origin: generation.origin }; emitAgent()
   const workspace = selected()
-  if (workspace) { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }
+  if (workspace) await applyWorkspaceSelection(workspace)
 }
 
 function registerIpc(): void {
@@ -272,7 +291,7 @@ function registerIpc(): void {
   })
   ipcMain.handle('narwhal:get-config-path', async (event) => { sender(event); return getConfigPath() })
   ipcMain.handle('narwhal:choose-workspace', async (event) => { sender(event); return chooseWorkspace() })
-  ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') { await hostBridge.listSessions(); if (workspace.selectedSessionId) await hostBridge.selectSession(workspace.selectedSessionId, workspace.path); else hostBridge.clearSelection() }; return snapshot() })
+  ipcMain.handle('narwhal:select-workspace', async (event, raw) => { sender(event); const id = asString(asRecord(raw).workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); store.selectedWorkspaceId = id; await persist(); syncSurvivingCwds(); if (agent.state === 'ready') void applyWorkspaceSelection(workspace); return snapshot() })
   ipcMain.handle('narwhal:rename-workspace', async (event, raw) => { sender(event); const value = asRecord(raw); const id = asString(value.workspaceId, 'workspaceId', 100); const workspace = requireWorkspace(id); const name = asString(value.name, 'workspace name', 120); if (!name) throw new Error('Workspace name is required'); workspace.name = name; await persist(); return snapshot() })
   ipcMain.handle('narwhal:delete-workspace', async (event, raw) => {
     sender(event)
@@ -306,7 +325,7 @@ function registerIpc(): void {
   ipcMain.handle('narwhal:list-sessions', async (event) => { sender(event); requireWorkspace(); return hostBridge.listSessions() })
   ipcMain.handle('narwhal:create-session', async (event) => { sender(event); const workspace = requireWorkspace(); const conversation = await hostBridge.createSession(workspace.path); workspace.selectedSessionId = conversation.selectedSessionId; await persist(); return conversation })
   ipcMain.handle('narwhal:select-session', async (event, raw) => { sender(event); const workspace = requireWorkspace(); const sessionId = asString(asRecord(raw).sessionId, 'sessionId', 140); const conversation = await hostBridge.selectSession(sessionId, workspace.path); workspace.selectedSessionId = sessionId; await persist(); return conversation })
-  ipcMain.handle('narwhal:send-prompt', async (event, raw) => { sender(event); const workspace = requireWorkspace(); const value = asRecord(raw); const rawText = typeof value.text === 'string' ? value.text.trim() : ''; const rawAttachments = Array.isArray(value.attachments) ? value.attachments : undefined; const attachments: { id: string; name: string; size: number; type: string }[] = []; if (rawAttachments) { for (const att of rawAttachments) { if (!att || typeof att !== 'object') continue; const obj = att as Record<string, unknown>; if (typeof obj.id !== 'string' || typeof obj.name !== 'string') continue; attachments.push({ id: obj.id, name: obj.name, size: typeof obj.size === 'number' ? obj.size : 0, type: typeof obj.type === 'string' ? obj.type : '' }) } } const hasText = rawText.length > 0; const hasAttachments = attachments.length > 0; if (!hasText && !hasAttachments) throw new Error('Message or attachment required'); if (rawText.length > 12_000) throw new Error('Message too long'); const conversation = await hostBridge.prompt(rawText, hasAttachments ? attachments : undefined); workspace.selectedSessionId = conversation.selectedSessionId; await persist(); return conversation })
+  ipcMain.handle('narwhal:send-prompt', async (event, raw) => { sender(event); const workspace = requireWorkspace(); const value = asRecord(raw); const rawText = typeof value.text === 'string' ? value.text.trim() : ''; const rawAttachments = Array.isArray(value.attachments) ? value.attachments : undefined; const attachments: { id: string; name: string; size: number; type: string; dataUrl?: string }[] = []; if (rawAttachments) { for (const att of rawAttachments) { if (!att || typeof att !== 'object') continue; const obj = att as Record<string, unknown>; if (typeof obj.id !== 'string' || typeof obj.name !== 'string') continue; const attType = typeof obj.type === 'string' ? obj.type : ''; attachments.push({ id: obj.id, name: obj.name, size: typeof obj.size === 'number' ? obj.size : 0, type: attType, ...(PROMPT_IMAGE_TYPES.has(attType) && typeof obj.dataUrl === 'string' && obj.dataUrl.startsWith('data:') ? { dataUrl: obj.dataUrl } : {}) }) } } const hasText = rawText.length > 0; const hasAttachments = attachments.length > 0; if (!hasText && !hasAttachments) throw new Error('Message or attachment required'); if (rawText.length > 12_000) throw new Error('Message too long'); const conversation = await hostBridge.prompt(rawText, hasAttachments ? attachments : undefined); workspace.selectedSessionId = conversation.selectedSessionId; await persist(); return conversation })
   ipcMain.handle('narwhal:cancel-prompt', async (event) => { sender(event); await hostBridge.cancel() })
   ipcMain.handle('narwhal:list-commands', async (event) => { sender(event); await hostBridge.listSessions(); return hostBridge.listCommands() })
   ipcMain.handle('narwhal:execute-command', async (event, raw) => { sender(event); const line = asString(asRecord(raw).line, 'command line', 1000); return hostBridge.executeCommand(line) })

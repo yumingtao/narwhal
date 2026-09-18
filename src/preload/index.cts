@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { AgentConfiguration, AgentConversation, AgentSnapshot, Attachment, BundlePluginCard, Command, CommandResult, ConversationStatus, CreateProviderResult, DesktopSettings, InstallResult, InstalledPlugin, McpServer, McpServerCard, NarwhalBridge, NarwhalConfig, SkillCard, WorkbenchSnapshot } from '../shared/desktop-contract.js'
 
 const invoke = <T,>(channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload) as Promise<T>
+/** Raster formats 0.1.5 accepts as inline base64 prompt image parts. */
+const IMAGE_DATA_URL_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 const bridge: NarwhalBridge = Object.freeze({
   bootstrap: () => invoke<{ agent: AgentSnapshot; workbench: WorkbenchSnapshot; settings: DesktopSettings; config: NarwhalConfig; configLoadError?: string }>('narwhal:bootstrap'),
   chooseWorkspace: () => invoke<WorkbenchSnapshot>('narwhal:choose-workspace'),
@@ -21,7 +23,12 @@ const bridge: NarwhalBridge = Object.freeze({
   createSession: () => invoke<AgentConversation>('narwhal:create-session'),
   selectSession: (sessionId: string) => invoke<AgentConversation>('narwhal:select-session', { sessionId }),
   sendPrompt: (text: string, attachments?: readonly Attachment[]) => {
-    const meta = attachments ? attachments.map((a) => ({ id: a.id, name: a.name, size: a.size, type: a.type })) : undefined
+    // Carry image bytes (data URL) for the raster types 0.1.5 admits as
+    // inline prompt image parts; other attachments stay metadata-only.
+    const meta = attachments ? attachments.map((a) => ({
+      id: a.id, name: a.name, size: a.size, type: a.type,
+      ...(IMAGE_DATA_URL_TYPES.has(a.type) && a.dataUrl ? { dataUrl: a.dataUrl } : {}),
+    })) : undefined
     return invoke<AgentConversation>('narwhal:send-prompt', { text, attachments: meta })
   },
   cancelPrompt: () => invoke<void>('narwhal:cancel-prompt'),
