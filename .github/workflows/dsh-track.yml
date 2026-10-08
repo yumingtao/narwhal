@@ -156,6 +156,12 @@ jobs:
         if: steps.compare.outputs.status == 'outdated' && success()
         uses: peter-evans/create-pull-request@v7
         with:
+          # A user-owned PAT (fine-grained, this repo only) instead of the
+          # default GITHUB_TOKEN: PRs opened by github-actions[bot] pause CI
+          # at "action_required", whereas PRs authored by a collaborator run
+          # pull_request checks automatically. The secret expires by design;
+          # rotate it before then or bump PRs revert to awaiting approval.
+          token: ${{ secrets.DSH_TRACK_PAT }}
           commit-message: "chore(dsh): bump runtime to ${{ steps.upstream.outputs.version }}"
           branch: "chore/bump-dsh-${{ steps.upstream.outputs.version }}"
           title: "chore(dsh): bump runtime to ${{ steps.upstream.outputs.version }}"
