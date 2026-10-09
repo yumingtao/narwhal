@@ -989,6 +989,24 @@ export class HostBridge {
       }
       const permission = namespaces.find((entry) => string(entry.ns, 100) === 'permission')
       const permissionValue = permission && isRecord(permission.value) ? permission.value : {}
+      // 0.2.0 moved switchable presets to the permission-presets plugin; the
+      // settings namespace stopped advertising the enum, so schema parsing
+      // returns nothing. Read the live catalog instead (absent on older
+      // runtimes, where the schema path still provides the list).
+      let catalogDefaultPreset: string | undefined
+      let catalogPresetOptions: { id: string; label: string }[] = []
+      try {
+        const presetCatalog = await this.rpc<{ options?: unknown; defaultPreset?: unknown }>('permissionPresets/catalog')
+        catalogDefaultPreset = string(presetCatalog?.defaultPreset, 100)
+        catalogPresetOptions = Array.isArray(presetCatalog?.options) ? presetCatalog!.options!.flatMap((row) => {
+          if (!isRecord(row)) return []
+          const id = string(row.value, 100); if (!id) return []
+          return [{ id, label: string(row.name, 100) ?? id }]
+        }) : []
+      } catch { /* runtime without permissionPresets/catalog — fall back to the schema */ }
+      const schemaPresetOptions = permission ? permissionOptions(permission.schema) : []
+      const resolvedPresetOptions = schemaPresetOptions.length > 0 ? schemaPresetOptions : catalogPresetOptions
+      const resolvedDefaultPreset = string(permissionValue.defaultPreset, 100) ?? catalogDefaultPreset
       // Selected model: the live session projection wins; otherwise the
       // catalog's global default; a per-model local preference fills effort.
       let selected: { provider: string; model: string; reasoningEffort?: string } | undefined
@@ -1003,7 +1021,7 @@ export class HostBridge {
       } catch { /* ignore */ }
       const finalReasoningEffort = baseReasoning ?? prefReasoning
       if (currentProvider && currentModel) selected = { provider: currentProvider, model: currentModel, ...(finalReasoningEffort ? { reasoningEffort: finalReasoningEffort } : {}) }
-      return { available: true, writable, providers: normalizedProviders, models, defaultPermission: string(permissionValue.defaultPreset, 100), permissionOptions: permission ? permissionOptions(permission.schema) : [], customProvider: customProviderCapability(namespaces, writable), selectedModel: selected }
+      return { available: true, writable, providers: normalizedProviders, models, defaultPermission: resolvedDefaultPreset, permissionOptions: resolvedPresetOptions, customProvider: customProviderCapability(namespaces, writable), selectedModel: selected }
     } catch (error) { return { available: false, writable: false, providers: [], models: [], permissionOptions: [], customProvider: { available: false, protocols: [], reason: 'Local Agent configuration is unavailable.' }, error: error instanceof Error ? error.message : 'Local Agent configuration is unavailable' } }
   }
   /** modelSelection.lastUsed for the selected session from session/list projections. */
