@@ -1,6 +1,6 @@
 {
   "name": "narwhal",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "license": "MIT",
   "dshRuntime": "npm@0.2.1-rc.2",
