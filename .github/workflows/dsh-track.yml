@@ -161,6 +161,9 @@ jobs:
           # at "action_required", whereas PRs authored by a collaborator run
           # pull_request checks automatically. The secret expires by design;
           # rotate it before then or bump PRs revert to awaiting approval.
+          # No `reviewers`: with the PAT the PR author is yumingtao, and
+          # GitHub rejects requesting a review from the PR author (422),
+          # which fails this whole step after the PR is already created.
           token: ${{ secrets.DSH_TRACK_PAT }}
           commit-message: "chore(dsh): bump runtime to ${{ steps.upstream.outputs.version }}"
           branch: "chore/bump-dsh-${{ steps.upstream.outputs.version }}"
@@ -189,7 +192,6 @@ jobs:
             dependencies
             dsh-runtime
             ${{ steps.risk.outputs.label }}
-          reviewers: yumingtao
 
   # Scheduled workflows fail silently (GitHub only emails on the first failure
   # and repeated red runs are easy to miss). Reconcile a single tracking issue:
