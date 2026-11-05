@@ -71,8 +71,15 @@ export function resolveRuntime(): DshRuntime {
   let runtimeRoot: string
   let source: string // for error messages / logging
 
-  if (app.isPackaged) {
-    runtimeRoot = join(process.resourcesPath, 'runtime', 'dsh')
+  // Packaged runtime wins, but only when it actually exists on disk.
+  // app.isPackaged can be true spuriously (e.g. ELECTRON_FORCE_IS_PACKAGED
+  // is set, or a dev run launched from an .app bundle on macOS), so guard
+  // with a real bin check and fall back to the dev discovery chain.
+  const packagedRoot = join(process.resourcesPath, 'runtime', 'dsh')
+  const packagedHasBin = existsSync(join(packagedRoot, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+
+  if (app.isPackaged && packagedHasBin) {
+    runtimeRoot = packagedRoot
     source = 'packaged'
   } else {
     const cfgRuntime = tryLoadRuntimeConfig()
@@ -111,7 +118,7 @@ export function resolveRuntime(): DshRuntime {
   const hasSourceBin = existsSync(join(runtimeRoot, 'apps', 'cli', 'src', 'bin.ts'))
 
   let usesDeployedRuntime: boolean
-  if (app.isPackaged) {
+  if (app.isPackaged && packagedHasBin) {
     usesDeployedRuntime = true
   } else if (explicitMode === 'deployed') {
     if (!hasDeployedBin) throw new Error(`config.json runtime.mode=deployed but ${runtimeRoot} has no deployed bin.js`)
