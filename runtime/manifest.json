@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "upstreamCommit": "47f943859bef60e4160492346772ded9b24f765a",
-  "dshVersion": "0.2.1-rc.5",
+  "dshVersion": "0.2.2-rc.1",
   "supportedPlatforms": [
     "darwin-arm64"
   ],
